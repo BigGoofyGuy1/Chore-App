@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "924898350932",
+    "project_id": "goofy-chore-app",
+    "storage_bucket": "goofy-chore-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:924898350932:android:a493b562763adec9b5dac1",
+        "android_client_info": {
+          "package_name": "com.example.choreapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBS-Q3VKDCMM0l3PDZGq6jFbJjCBxnwLQs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Chore App",
+    "slug": "chore-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "choreapp",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#f8fafc"
+    },
+    "android": {
+      "package": "com.example.choreapp",
+      "permissions": ["READ_MEDIA_IMAGES"],
+      "adaptiveIcon": {
+        "backgroundColor": "#f8fafc"
+      }
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
+}

@@ -1,31 +1,19 @@
-# dependencies
-node_modules
-.expo
-.expo-shared
+# Firebase
+firebaseConfig.ts
 
-# expo
+# Dependencies
+/node_modules
+
+# Expo
+.expo/
 *.jks
 *.p8
 *.p12
 *.key
+*.mobileprovision
 
-# logs
+# Misc
+.DS_Store
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# editor
-.vscode
-.idea
-
-# build outputs
-dist
-build
-android
-ios
-
-# env
-.env
-app.config.local.json
-*.local.js
-src/firebaseConfig.ts

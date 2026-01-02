@@ -329,40 +329,41 @@ function ParentView({
   addChore
 }: ParentViewProps) {
   return (
-    <ScrollView style={styles.section}>
-      <Text style={styles.sectionTitle}>Create a chore</Text>
-      <View style={styles.card}>
-        <TextInput
-          placeholder="Chore title"
-          style={styles.input}
-          value={newChoreTitle}
-          onChangeText={setNewChoreTitle}
-        />
-        <TextInput
-          placeholder="Assign to (child's name)"
-          style={styles.input}
-          value={assignee}
-          onChangeText={setAssignee}
-        />
-        <TouchableOpacity style={styles.primaryButton} onPress={addChore}>
-          <Text style={styles.primaryButtonText}>Add chore</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.sectionTitle}>Family chores</Text>
-      {loadingChores ? (
-        <ActivityIndicator />
-      ) : (
-        <FlatList
-          data={chores}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <ChoreCard chore={item} role="parent" />}
-          ListEmptyComponent={
-            <Text style={styles.subtle}>No chores yet. Add one above.</Text>
-          }
-        />
-      )}
-    </ScrollView>
+    <FlatList
+      style={styles.section}
+      data={chores}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => <ChoreCard chore={item} role="parent" />}
+      ListHeaderComponent={
+        <>
+          <Text style={styles.sectionTitle}>Create a chore</Text>
+          <View style={styles.card}>
+            <TextInput
+              placeholder="Chore title"
+              style={styles.input}
+              value={newChoreTitle}
+              onChangeText={setNewChoreTitle}
+            />
+            <TextInput
+              placeholder="Assign to (child's name)"
+              style={styles.input}
+              value={assignee}
+              onChangeText={setAssignee}
+            />
+            <TouchableOpacity style={styles.primaryButton} onPress={addChore}>
+              <Text style={styles.primaryButtonText}>Add chore</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.sectionTitle}>Family chores</Text>
+          {loadingChores && <ActivityIndicator style={{ marginTop: 12 }} />}
+        </>
+      }
+      ListEmptyComponent={
+        !loadingChores ? (
+          <Text style={styles.subtle}>No chores yet. Add one above.</Text>
+        ) : null
+      }
+    />
   );
 }
 
@@ -374,23 +375,25 @@ type ChildViewProps = {
 
 function ChildView({ chores, loadingChores, onUploadProof }: ChildViewProps) {
   return (
-    <ScrollView style={styles.section}>
-      <Text style={styles.sectionTitle}>Your chores</Text>
-      {loadingChores ? (
-        <ActivityIndicator />
-      ) : (
-        <FlatList
-          data={chores}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <ChoreCard chore={item} role="child" onUploadProof={onUploadProof} />
-          )}
-          ListEmptyComponent={
-            <Text style={styles.subtle}>No chores assigned to you yet.</Text>
-          }
-        />
+    <FlatList
+      style={styles.section}
+      data={chores}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <ChoreCard chore={item} role="child" onUploadProof={onUploadProof} />
       )}
-    </ScrollView>
+      ListHeaderComponent={
+        <>
+          <Text style={styles.sectionTitle}>Your chores</Text>
+          {loadingChores && <ActivityIndicator style={{ marginTop: 12 }} />}
+        </>
+      }
+      ListEmptyComponent={
+        !loadingChores ? (
+          <Text style={styles.subtle}>No chores assigned to you yet.</Text>
+        ) : null
+      }
+    />
   );
 }
 

@@ -11,7 +11,9 @@
     },
     "android": {
       "package": "com.example.choreapp",
-      "permissions": ["READ_MEDIA_IMAGES"],
+      "permissions": [
+        "READ_MEDIA_IMAGES"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#f8fafc"
       }
@@ -21,8 +23,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
+        "projectId": "52e8eccd-2b9e-4d54-8f53-6ab13a5ebb33"
       }
-    }
+    },
+    "owner": "biggoofyguy"
   }
 }

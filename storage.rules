@@ -1,0 +1,22 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function to get the current user's member document from Firestore
+    function getMemberData() {
+      return firestore.get(/databases/(default)/documents/members/$(request.auth.uid)).data;
+    }
+
+    // Allow access to chore proofs only if the user belongs to the same family
+    match /choreProofs/{familyCode}/{allPaths=**} {
+      allow read, write: if request.auth != null && 
+        getMemberData().familyCode == familyCode;
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

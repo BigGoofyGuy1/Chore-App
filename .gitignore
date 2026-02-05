@@ -11,6 +11,9 @@ firebaseConfig.ts
 *.p12
 *.key
 *.mobileprovision
+dist/
+.idea/
+android/app/debug.keystore
 
 # Misc
 .DS_Store

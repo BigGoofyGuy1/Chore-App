@@ -12,7 +12,10 @@ A lightweight mobile app for parents to send chores to their kids' devices and g
 ```bash
 npm install
 ```
-2) Create your Firebase config file:
+2) (Native) Add Google Services config:
+   - Download `google-services.json` from Firebase Console and place it at the project root.
+   - `app.json` references it via `android.googleServicesFile`.
+3) Create your Firebase config file:
 ```bash
 cp src/firebaseConfig.example.ts src/firebaseConfig.ts
 # Edit src/firebaseConfig.ts with your Firebase keys
@@ -65,6 +68,7 @@ eas build -p android --profile preview --local
 - `eas.json` — EAS config with an Android APK build profile
 
 ## Notes
-- This sample omits auth/verification for simplicity. Add Firebase Auth and tighten rules before shipping.
+- Native builds use **React Native Firebase**; Expo Go is not supported. Use EAS dev client or prebuild.
+- App uses **anonymous auth** (no email/password) for now. Clearing app data will create a new user.
 - Images are uploaded to `choreProofs/{familyCode}/...` and download URLs are saved on the chore document.
 - Firestore may prompt you to create an index for `familyCode + createdAt` on first run; accept the link in the console to generate it.

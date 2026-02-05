@@ -1,9 +1,40 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Safely get the current user's family code
+    function myFamilyCode() {
+      return get(/databases/$(database)/documents/members/$(request.auth.uid)).data.familyCode;
+    }
+
+    // Check if user is a parent in their family
+    function isParent() {
+      return get(/databases/$(database)/documents/members/$(request.auth.uid)).data.role == 'parent';
+    }
+
+    match /members/{userId} {
+      allow create: if isSignedIn() && isSelf(userId);
+      allow read: if isSignedIn() && (isSelf(userId) || resource.data.familyCode == myFamilyCode());
+      allow update: if isSignedIn() && (isSelf(userId) || (isParent() && resource.data.familyCode == myFamilyCode()));
+    }
+
+    match /chores/{id} {
+      allow read: if isSignedIn() && resource.data.familyCode == myFamilyCode();
+      allow create: if isSignedIn() && isParent() && request.resource.data.familyCode == myFamilyCode();
+      allow update, delete: if isSignedIn() && resource.data.familyCode == myFamilyCode() && (isParent() || resource.data.assignedToUid == request.auth.uid);
+    }
+
+    match /rewards/{id} {
+      allow read: if isSignedIn() && resource.data.familyCode == myFamilyCode();
+      allow write: if isSignedIn() && isParent() && (resource == null ? request.resource.data.familyCode : resource.data.familyCode) == myFamilyCode();
     }
   }
 }

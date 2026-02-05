@@ -1,0 +1,9 @@
+# Ignore everything in .gitignore by default
+# But EXPLICITLY include the config files needed for the build
+node_modules
+.expo
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision

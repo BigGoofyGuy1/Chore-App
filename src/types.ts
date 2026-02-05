@@ -1,21 +1,57 @@
 export type Role = "parent" | "child";
 
-export type ChoreStatus = "pending" | "completed";
+export type ChoreStatus = "pending" | "in_progress" | "submitted" | "redo" | "approved";
+
+export type RepeatInterval = "none" | "daily" | "weekly" | "monthly";
 
 export type Profile = {
+  uid: string;
   displayName: string;
   familyCode: string;
   role: Role;
+  points?: number;
+  pushToken?: string;
 };
 
 export type Chore = {
   id: string;
   title: string;
   assignedTo: string;
+  assignedToUid?: string;
   familyCode: string;
   status: ChoreStatus;
-  photoUrl?: string | null;
+  description?: string;
+  photoUrls?: string[];
   completedBy?: string;
-  createdAt?: unknown;
-  completedAt?: unknown;
+  createdAt?: any;
+  completedAt?: any;
+  dueAt?: any;
+  feedback?: string;
+  steps?: string[];
+  repeat: RepeatInterval;
+  points: number;
+};
+
+export type Reward = {
+  id: string;
+  title: string;
+  points: number;
+  familyCode: string;
+};
+
+export type RedemptionStatus = "pending" | "approved" | "denied";
+
+export type Redemption = {
+  id: string;
+  rewardId: string;
+  rewardTitle: string;
+  points: number;
+  requesterUid: string;
+  requesterName: string;
+  familyCode: string;
+  status: RedemptionStatus;
+  createdAt?: any;
+  decidedAt?: any;
+  decidedByUid?: string;
+  decidedByName?: string;
 };

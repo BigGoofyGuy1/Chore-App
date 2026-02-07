@@ -9,6 +9,10 @@
           "order": "ASCENDING"
         },
         {
+          "fieldPath": "archivedAt",
+          "order": "ASCENDING"
+        },
+        {
           "fieldPath": "createdAt",
           "order": "DESCENDING"
         }
@@ -20,6 +24,24 @@
       "fields": [
         {
           "fieldPath": "familyCode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "pointsLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "familyCode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "memberUid",
           "order": "ASCENDING"
         },
         {

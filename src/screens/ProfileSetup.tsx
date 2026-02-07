@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { FirebaseAuthTypes } from "@react-native-firebase/auth";
-import { db } from "../firebase";
-import { doc, setDoc } from "@react-native-firebase/firestore";
+import { auth, functions } from "../firebase";
+import { signInWithCustomToken } from "@react-native-firebase/auth";
 import { Profile, Role } from "../types";
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
@@ -42,7 +42,7 @@ async function registerForPushNotificationsAsync() {
   }
 }
 
-export function ProfileSetup({ user, onSave }: { user: FirebaseAuthTypes.User, onSave: (p: Profile) => void }) {
+export function ProfileSetup({ user: _user, onSave }: { user: FirebaseAuthTypes.User, onSave: (p: Profile) => void }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [role, setRole] = useState<Role>("child");
@@ -51,22 +51,20 @@ export function ProfileSetup({ user, onSave }: { user: FirebaseAuthTypes.User, o
     if (!name || !code) { Alert.alert("Required", "Name and Family Code are needed."); return; }
     const token = await registerForPushNotificationsAsync();
     
-    // Construct profile without undefined values
-    const profile: any = {
-      uid: user.uid,
-      displayName: name.trim(),
-      familyCode: code.trim().toLowerCase(),
-      role: role,
-      points: 0,
-    };
-    
-    if (token) {
-      profile.pushToken = token;
-    }
-    
     try {
-      await setDoc(doc(db, "members", user.uid), profile);
-      onSave(profile as Profile);
+      const callable = functions.httpsCallable("resolveMemberByName");
+      const result = await callable({
+        displayName: name.trim(),
+        familyCode: code.trim().toLowerCase(),
+        role,
+        pushToken: token || null,
+      });
+      const data = result?.data as { token?: string; profile?: Profile } | undefined;
+      if (!data?.token || !data?.profile) {
+        throw new Error("Invalid login response.");
+      }
+      await signInWithCustomToken(auth, data.token);
+      onSave(data.profile);
     } catch (error) {
       console.error("Error saving profile:", error);
       Alert.alert("Error", "Could not save profile. Please try again.");

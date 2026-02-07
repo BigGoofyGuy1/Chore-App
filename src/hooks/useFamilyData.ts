@@ -24,6 +24,7 @@ export function useFamilyData(profile: Profile | null) {
     const choresQuery = query(
       collection(db, "chores"),
       where("familyCode", "==", profile.familyCode),
+      where("archivedAt", "==", null),
       orderBy("createdAt", "desc")
     );
 

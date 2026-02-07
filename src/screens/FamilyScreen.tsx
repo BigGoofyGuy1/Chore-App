@@ -31,14 +31,6 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({ familyMembers, profi
       <Text style={styles.title}>Family Hub</Text>
       
       <View style={styles.formCard}>
-        <Text style={styles.sectionTitle}>Invite Family</Text>
-        <Text style={styles.detailLabel}>Family Code: <Text style={{ color: '#0F172A', fontWeight: '700' }}>{profile.familyCode}</Text></Text>
-        <TouchableOpacity style={[styles.primaryBtn, { marginTop: 15 }]} onPress={handleInvite}>
-          <Text style={styles.primaryBtnText}>Share Invite Link</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.formCard}>
         <Text style={styles.sectionTitle}>Balances</Text>
         {validMembers.map((c) => (
           <View key={c.uid} style={styles.miniChoreRow}>

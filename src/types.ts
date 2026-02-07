@@ -30,6 +30,9 @@ export type Chore = {
   steps?: string[];
   repeat: RepeatInterval;
   points: number;
+  archived?: boolean;
+  archivedAt?: any;
+  sourceChoreId?: string;
 };
 
 export type Reward = {
@@ -54,4 +57,20 @@ export type Redemption = {
   decidedAt?: any;
   decidedByUid?: string;
   decidedByName?: string;
+};
+
+export type PointsLogSource = "manual_adjustment" | "chore_approved";
+
+export type PointsLog = {
+  id: string;
+  familyCode: string;
+  memberUid: string;
+  memberName: string;
+  pointsDelta: number;
+  note?: string;
+  createdAt?: any;
+  createdByUid?: string;
+  createdByName?: string;
+  source?: PointsLogSource;
+  choreId?: string;
 };

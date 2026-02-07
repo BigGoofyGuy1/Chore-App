@@ -36,5 +36,11 @@ service cloud.firestore {
       allow read: if isSignedIn() && resource.data.familyCode == myFamilyCode();
       allow write: if isSignedIn() && isParent() && (resource == null ? request.resource.data.familyCode : resource.data.familyCode) == myFamilyCode();
     }
+
+    match /pointsLogs/{id} {
+      allow read: if isSignedIn() && resource.data.familyCode == myFamilyCode();
+      allow create: if isSignedIn() && isParent() && request.resource.data.familyCode == myFamilyCode();
+      allow update, delete: if false;
+    }
   }
 }

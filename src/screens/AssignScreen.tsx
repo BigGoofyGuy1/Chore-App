@@ -58,7 +58,9 @@ export const AssignScreen: React.FC<AssignScreenProps> = ({ profile, familyMembe
         createdAt: serverTimestamp(), 
         repeat, 
         dueAt: timestampFromDate(date), 
-        steps: [] 
+        steps: [],
+        archived: false,
+        archivedAt: null
       };
 
       await addDoc(collection(db, "chores"), choreData);

@@ -7,6 +7,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { db } from '../firebase';
 import { Chore, Profile } from '../types';
 import { sendPushNotification, triggerHapticSuccess } from '../utils/sendPushNotification';
+import { namesMatch } from '../utils/nameMatch';
 
 export function useChoreActions(profile: Profile | null, familyMembers: Profile[]) {
   const [uploading, setUploading] = useState(false);
@@ -14,7 +15,14 @@ export function useChoreActions(profile: Profile | null, familyMembers: Profile[
   const handleApprove = async (chore: Chore) => {
     if (!profile) return;
     try {
-      const childMember = familyMembers.find(m => m.displayName === chore.assignedTo);
+      const recipientUid = chore.completedByUid || chore.assignedToUid;
+      let childMember = recipientUid
+        ? familyMembers.find(m => m.uid === recipientUid)
+        : null;
+      if (!childMember) {
+        const name = chore.completedBy || chore.assignedTo;
+        childMember = familyMembers.find(m => namesMatch(m.displayName, name));
+      }
       if (!childMember) return;
 
       await runTransaction(db, async (transaction) => {
@@ -93,12 +101,19 @@ export function useChoreActions(profile: Profile | null, familyMembers: Profile[
       }));
 
       // 5. Update Firestore
-      await updateDoc(doc(collection(db, "chores"), chore.id), { 
+      const updateData: Partial<Chore> = { 
         status: "submitted", 
         photoUrls: urls, 
-        completedBy: profile.displayName, 
+        completedBy: profile.displayName,
+        completedByUid: profile.uid,
         completedAt: serverTimestamp() 
-      });
+      };
+      if (chore.isBounty && !chore.assignedToUid) {
+        updateData.assignedTo = profile.displayName;
+        updateData.assignedToUid = profile.uid;
+      }
+
+      await updateDoc(doc(collection(db, "chores"), chore.id), updateData);
 
       // 6. Notify parents
       familyMembers.filter(m => m.role === 'parent' && m.pushToken).forEach(p => {

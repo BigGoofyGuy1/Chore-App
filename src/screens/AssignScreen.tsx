@@ -34,8 +34,9 @@ export const AssignScreen: React.FC<AssignScreenProps> = ({ profile, familyMembe
       return;
     }
 
-    const target = familyMembers.find(m => m.uid === selectedUid);
-    if (!target) {
+    const isBounty = selectedUid === "BOUNTY";
+    const target = isBounty ? null : familyMembers.find(m => m.uid === selectedUid);
+    if (!isBounty && !target) {
       Alert.alert("Error", "Selected person not found in your family.");
       return;
     }
@@ -51,8 +52,8 @@ export const AssignScreen: React.FC<AssignScreenProps> = ({ profile, familyMembe
         title: title.trim(), 
         description: desc.trim(), 
         points: Number(pts) || 0, 
-        assignedTo: target.displayName,
-        assignedToUid: target.uid, 
+        assignedTo: isBounty ? "Anyone" : target!.displayName.trim(),
+        assignedToUid: isBounty ? null : target!.uid, 
         familyCode: profile.familyCode, 
         status: "pending", 
         createdAt: serverTimestamp(), 
@@ -60,15 +61,24 @@ export const AssignScreen: React.FC<AssignScreenProps> = ({ profile, familyMembe
         dueAt: timestampFromDate(date), 
         steps: [],
         archived: false,
-        archivedAt: null
+        archivedAt: null,
+        isBounty
       };
 
-      await addDoc(collection(db, "chores"), choreData);
-
-      if (target.pushToken) {
+      await addDoc(collection(db, "chores"), choreData);      if (isBounty) {
+        familyMembers
+          .filter(m => m.role === 'child' && m.pushToken)
+          .forEach(m => {
+            sendPushNotification(
+              m.pushToken!,
+              "New Bounty!",
+              `Anyone can do this: ${title} (${pts} pts)`
+            );
+          });
+      } else if (target!.pushToken) {
         sendPushNotification(
-          target.pushToken, 
-          "New Chore Assigned! 📋", 
+          target!.pushToken!, 
+          "New Chore Assigned!", 
           `You have a new chore: ${title} (${pts} pts)`
         );
       }
@@ -155,6 +165,14 @@ export const AssignScreen: React.FC<AssignScreenProps> = ({ profile, familyMembe
         </View>
         
         <Text style={styles.inputLabel}>To Whom?</Text>
+        <View style={styles.chipRow}>
+          <TouchableOpacity 
+            style={[styles.chip, selectedUid === "BOUNTY" && styles.chipActive]} 
+            onPress={() => setSelectedUid("BOUNTY")}
+          >
+            <Text style={[styles.chipText, selectedUid === "BOUNTY" && styles.chipTextActive]}>Bounty (Anyone)</Text>
+          </TouchableOpacity>
+        </View>
         {children.length > 0 && (
           <>
             <Text style={styles.groupLabel}>Children</Text>
@@ -222,3 +240,4 @@ const styles = StyleSheet.create({
   disabledBtn: { backgroundColor: '#94A3B8' },
   primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
 });
+

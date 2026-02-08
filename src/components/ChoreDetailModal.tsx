@@ -14,6 +14,7 @@ import {
 import { db } from '../firebase';
 import { doc, updateDoc, deleteDoc } from "@react-native-firebase/firestore";
 import { Chore, Profile } from '../types';
+import { namesMatch } from '../utils/nameMatch';
 
 interface ChoreDetailModalProps {
   visible: boolean;
@@ -46,6 +47,16 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
   const [editPoints, setEditPoints] = useState("0");
 
   if (!chore) return null;
+  const isAssignee = Boolean(
+    (chore.assignedToUid && chore.assignedToUid === profile.uid) ||
+    namesMatch(chore.assignedTo, profile.displayName)
+  );
+  const isBountyAvailable =
+    Boolean(chore.isBounty) &&
+    !chore.assignedToUid &&
+    chore.status !== 'submitted' &&
+    chore.status !== 'approved';
+  const canActOnChore = isAssignee || isBountyAvailable;
 
   const handleUpdate = async () => {
     try {
@@ -104,6 +115,12 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
                   <Text style={styles.detailLabel}>Chore</Text>
                   <Text style={styles.detailValue}>{chore.title}</Text>
                 </View>
+                {chore.description ? (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Description</Text>
+                    <Text style={styles.detailValue}>{chore.description}</Text>
+                  </View>
+                ) : null}
                 <View style={styles.detailItem}>
                   <Text style={styles.detailLabel}>Value</Text>
                   <Text style={[styles.detailValue, { color: '#F59E0B', fontWeight: '800' }]}>{chore.points} Points</Text>
@@ -116,7 +133,7 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
                       <TouchableOpacity 
                         key={i} 
                         style={styles.stepRow} 
-                        disabled={profile.role !== 'child' || chore.status === 'approved'} 
+                        disabled={!canActOnChore || chore.status === 'approved'} 
                         onPress={() => toggleStep(i)}
                       >
                         <View style={[styles.checkbox, s.startsWith("✓ ") && styles.checkboxActive]} />
@@ -143,7 +160,7 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
                 )}
 
                 <View style={styles.modalActions}>
-                  {chore.status !== 'approved' && chore.status !== 'submitted' && profile.role === 'child' && (
+                  {chore.status !== 'approved' && chore.status !== 'submitted' && canActOnChore && (
                     <TouchableOpacity 
                       style={[styles.primaryBtn, uploading && { opacity: 0.7 }]} 
                       disabled={uploading} 

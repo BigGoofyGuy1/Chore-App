@@ -17,12 +17,14 @@ export type Chore = {
   id: string;
   title: string;
   assignedTo: string;
-  assignedToUid?: string;
+  assignedToUid?: string | null;
+  isBounty?: boolean;
   familyCode: string;
   status: ChoreStatus;
   description?: string;
   photoUrls?: string[];
   completedBy?: string;
+  completedByUid?: string | null;
   createdAt?: any;
   completedAt?: any;
   dueAt?: any;

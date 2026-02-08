@@ -6,6 +6,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import * as Updates from "expo-updates";
 
 import { db, auth } from "./src/firebase";
 import { 
@@ -17,6 +18,7 @@ import { onAuthStateChanged, signInAnonymously } from "@react-native-firebase/au
 import { Chore, Profile } from "./src/types";
 import { useFamilyData } from "./src/hooks/useFamilyData";
 import { useChoreActions } from "./src/hooks/useChoreActions";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Screens & Components
 import { ProfileSetup } from "./src/screens/ProfileSetup";
@@ -34,32 +36,59 @@ export default function App() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [activeTab, setActiveTab] = useState<string>("Today");
   const [selectedChore, setSelectedChore] = useState<Chore | null>(null);
+  const {
+    isChecking,
+    isDownloading,
+    isUpdateAvailable,
+    isUpdatePending,
+  } = Updates.useUpdates();
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (!u) {
         signInAnonymously(auth).catch(e => {
           console.error("Anon auth failed", e);
           setLoadingProfile(false);
         });
-      } else {
-        setUser(u);
-        getDoc(doc(collection(db, "members"), u.uid)).then((snap) => {
+        return;
+      }
+
+      setUser(u);
+      try {
+        const storedMemberUid = await AsyncStorage.getItem("memberUid");
+        if (storedMemberUid) {
+          const snap = await getDoc(doc(collection(db, "members"), storedMemberUid));
           if (snap.exists) {
             const p = snap.data() as Profile;
             setProfile(p);
             setActiveTab(p.role === "parent" ? "Review" : "Today");
+          } else {
+            await AsyncStorage.removeItem("memberUid");
           }
-          setLoadingProfile(false);
-        }).catch(() => setLoadingProfile(false));
+        }
+      } catch (e) {
+        console.error("Failed to load saved profile", e);
+      } finally {
+        setLoadingProfile(false);
       }
     });
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (isUpdatePending) {
+      Updates.reloadAsync().catch((e) => console.error("Update reload failed", e));
+    }
+  }, [isUpdatePending]);
+
   const { chores, familyMembers, rewards, loading: loadingData } = useFamilyData(profile);
   const { handleApprove, uploadProof, uploading } = useChoreActions(profile, familyMembers);
+
+  const handleSaveProfile = (p: Profile) => {
+    setProfile(p);
+    setActiveTab(p.role === "parent" ? "Review" : "Today");
+  };
 
   const onApprove = async (chore: Chore) => {
     const success = await handleApprove(chore);
@@ -76,7 +105,7 @@ export default function App() {
   }
   
   if (!user || !profile) {
-    return <ProfileSetup user={user} onSave={setProfile} />;
+    return <ProfileSetup user={user} onSave={handleSaveProfile} />;
   }
 
   const renderContent = () => {
@@ -97,9 +126,24 @@ export default function App() {
     }
   };
 
+  const updateBannerText = isUpdatePending
+    ? "Applying update..."
+    : isDownloading
+      ? "Downloading update..."
+      : isChecking
+        ? "Checking for updates..."
+        : isUpdateAvailable
+          ? "Update available. Downloading..."
+          : null;
+
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar style="dark" />
+      {!!updateBannerText && (
+        <View style={styles.updateBanner}>
+          <Text style={styles.updateBannerText}>{updateBannerText}</Text>
+        </View>
+      )}
       <View style={styles.content}>
         {renderContent()}
       </View>
@@ -140,4 +184,15 @@ const styles = StyleSheet.create({
   content: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   navBar: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingHorizontal: 20, paddingBottom: 20 },
+  updateBanner: {
+    backgroundColor: '#0F172A',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  updateBannerText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 });

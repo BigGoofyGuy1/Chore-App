@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Chore, Profile, RepeatInterval } from '../types';
 import { ChoreCard } from '../components/ChoreCard';
+import { namesMatch } from '../utils/nameMatch';
 
 interface ParentDashboardProps {
   profile: Profile;
@@ -19,6 +20,18 @@ const GET_FAMILY_STATUS_COLOR = (status: string) => {
   }
 };
 
+const STATUS_GROUP = (status: string) => {
+  switch (status) {
+    case 'submitted': return 1; // Awaiting Approval
+    case 'approved': return 2;
+    case 'pending':
+    case 'in_progress':
+    case 'redo':
+    default:
+      return 0; // Pending Chores
+  }
+};
+
 export const ParentDashboard: React.FC<ParentDashboardProps> = ({ 
   profile, 
   chores, 
@@ -26,12 +39,23 @@ export const ParentDashboard: React.FC<ParentDashboardProps> = ({
   onPressChore 
 }) => {
   const [filter, setFilter] = useState<RepeatInterval | "all">("all");
+  const [bountiesOpen, setBountiesOpen] = useState(true);
 
   const filteredChores = filter === "all" ? chores : chores.filter(c => (c.repeat || 'none') === filter);
-  const needsReview = filteredChores.filter(c => c.status === "submitted");
+  const bounties = filteredChores
+    .filter(c => c.isBounty)
+    .filter(c => !c.assignedToUid)
+    .filter(c => c.status !== 'approved' && c.status !== 'submitted')
+    .sort((a, b) => {
+      const groupDiff = STATUS_GROUP(a.status) - STATUS_GROUP(b.status);
+      if (groupDiff !== 0) return groupDiff;
+      const aTitle = (a.title || "").toLowerCase();
+      const bTitle = (b.title || "").toLowerCase();
+      return aTitle.localeCompare(bTitle, "en");
+    });
   
   const activeMembers = familyMembers.filter(member => 
-    filteredChores.some(chore => chore.assignedTo === member.displayName)
+    filteredChores.some(chore => namesMatch(chore.assignedTo, member.displayName))
   );
 
   return (
@@ -52,17 +76,36 @@ export const ParentDashboard: React.FC<ParentDashboardProps> = ({
       <FlatList 
         ListHeaderComponent={
           <>
-            <Text style={styles.title}>Review Queue</Text>
-            {needsReview.length === 0 && <Text style={[styles.emptyText, { marginVertical: 20 }]}>No chores pending review.</Text>}
-            {needsReview.map(item => <ChoreCard key={item.id} chore={item} onPress={() => onPressChore(item)} />)}
-            <View style={{ height: 30 }} />
+            <View style={styles.bountySection}>
+              <TouchableOpacity style={styles.bountyHeader} onPress={() => setBountiesOpen(v => !v)}>
+                <Text style={styles.bountyTitle}>Bounties</Text>
+                <Text style={styles.bountyToggle}>{bountiesOpen ? "Hide" : "Show"}</Text>
+              </TouchableOpacity>
+              {bountiesOpen ? (
+                bounties.length ? (
+                  bounties.map(item => (
+                    <ChoreCard key={item.id} chore={item} onPress={() => onPressChore(item)} />
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>No bounties right now.</Text>
+                )
+              ) : null}
+            </View>
             <Text style={styles.title}>Family Progress</Text>
           </>
         }
         data={activeMembers}
         keyExtractor={item => item.uid}
         renderItem={({ item: member }) => {
-          const memberChores = filteredChores.filter(c => c.assignedTo === member.displayName);
+          const memberChores = filteredChores
+            .filter(c => namesMatch(c.assignedTo, member.displayName))
+            .sort((a, b) => {
+              const groupDiff = STATUS_GROUP(a.status) - STATUS_GROUP(b.status);
+              if (groupDiff !== 0) return groupDiff;
+              const aTitle = (a.title || "").toLowerCase();
+              const bTitle = (b.title || "").toLowerCase();
+              return aTitle.localeCompare(bTitle, "en");
+            });
           return (
             <View key={member.uid} style={styles.familySection}>
               <View style={styles.familySectionHeader}>
@@ -94,6 +137,10 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
   filterTextActive: { color: '#0F172A' },
   emptyText: { fontStyle: 'italic', color: '#94A3B8', textAlign: 'center' },
+  bountySection: { marginBottom: 10 },
+  bountyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  bountyTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  bountyToggle: { fontSize: 12, fontWeight: '600', color: '#2563EB' },
   familySection: { marginBottom: 20 },
   familySectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   childName: { fontSize: 16, fontWeight: '600' },

@@ -222,50 +222,6 @@ exports.joinWithInvite = publicCallable.https.onCall(async (data, context) => {
   return result;
 });
 
-exports.resolveMemberByName = publicCallable.https.onCall(async (data) => {
-  const displayName = normalizeName(data?.displayName);
-  const familyCode = normalizeName(data?.familyCode).toLowerCase();
-  if (!displayName || !familyCode) {
-    throw new functions.https.HttpsError("invalid-argument", "displayName and familyCode are required.");
-  }
-
-  const requestedRole = data?.role === "parent" ? "parent" : "child";
-  const pushToken = data?.pushToken || null;
-
-  const existingSnap = await db.collection("members")
-    .where("familyCode", "==", familyCode)
-    .where("displayName", "==", displayName)
-    .limit(1)
-    .get();
-
-  let profile = null;
-
-  if (!existingSnap.empty) {
-    const doc = existingSnap.docs[0];
-    const data = doc.data();
-    profile = { uid: doc.id, ...data };
-
-    if (pushToken && pushToken !== data.pushToken) {
-      await doc.ref.update({ pushToken });
-      profile.pushToken = pushToken;
-    }
-  } else {
-    const memberRef = db.collection("members").doc();
-    profile = {
-      uid: memberRef.id,
-      displayName,
-      familyCode,
-      role: requestedRole,
-      points: 0,
-      pushToken,
-    };
-    await memberRef.set(profile);
-  }
-
-  const customToken = await admin.auth().createCustomToken(profile.uid);
-  return { token: customToken, profile };
-});
-
 exports.rollDailyChores = functions.pubsub
   .schedule("0 0 * * *")
   .timeZone(DEFAULT_TIMEZONE)

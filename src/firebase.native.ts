@@ -1,30 +1,41 @@
 import { getApp, getApps, initializeApp } from "@react-native-firebase/app";
 import { getAuth, connectAuthEmulator } from "@react-native-firebase/auth";
 import { getFirestore, connectFirestoreEmulator, serverTimestamp, Timestamp } from "@react-native-firebase/firestore";
-import functionsModule from "@react-native-firebase/functions";
 import { getStorage, connectStorageEmulator } from "@react-native-firebase/storage";
 import { Platform } from "react-native";
+import * as Device from "expo-device";
 
 // Ensure Firebase is initialized
 const app = getApps().length === 0 ? initializeApp() : getApp();
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const functions = functionsModule(app);
 export const storage = getStorage(app);
 
-// Use Emulators in development mode
+// Use Emulators in development mode on simulators/emulators by default.
+// For physical devices, set EXPO_PUBLIC_FIREBASE_EMULATOR_HOST to your LAN IP to opt-in.
 if (__DEV__) {
-  const emulatorHost = Platform.OS === "android" ? "10.0.2.2" : "localhost";
-  
-  try {
-    connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
-    connectFirestoreEmulator(db, emulatorHost, 8080);
-    functions.useEmulator(emulatorHost, 5001);
-    connectStorageEmulator(storage, emulatorHost, 9199);
-    console.log(`Connected to Firebase Emulators at ${emulatorHost}`);
-  } catch (e) {
-    console.log("Failed to connect to emulators:", e);
+  const hasConnected = (globalThis as any).__FIREBASE_EMULATOR_CONNECTED;
+  if (!hasConnected) {
+    const disableEmulators = process.env.EXPO_PUBLIC_DISABLE_EMULATORS === "1";
+    const emulatorHostEnv = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST;
+    const emulatorHostDefault = Platform.OS === "android" ? "10.0.2.2" : "localhost";
+    const emulatorHost = emulatorHostEnv?.length ? emulatorHostEnv : emulatorHostDefault;
+    const forceEmulators = process.env.EXPO_PUBLIC_FORCE_FIREBASE_EMULATORS === "1";
+    const shouldUseEmulators =
+      !disableEmulators && (!Device.isDevice || forceEmulators || Boolean(emulatorHostEnv?.length));
+
+    if (shouldUseEmulators) {
+      try {
+        connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+        connectFirestoreEmulator(db, emulatorHost, 8080);
+        connectStorageEmulator(storage, emulatorHost, 9199);
+        console.log(`Connected to Firebase Emulators at ${emulatorHost}`);
+        (globalThis as any).__FIREBASE_EMULATOR_CONNECTED = true;
+      } catch (e) {
+        console.log("Failed to connect to emulators:", e);
+      }
+    }
   }
 }
 

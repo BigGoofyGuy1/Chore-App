@@ -1,12 +1,14 @@
 import React, { useState } from "react";
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import type { FirebaseAuthTypes } from "@react-native-firebase/auth";
-import { auth, functions } from "../firebase";
-import { signInWithCustomToken } from "@react-native-firebase/auth";
+import { db } from "../firebase";
+import { collection, doc, getDocs, query, setDoc, updateDoc, where } from "@react-native-firebase/firestore";
 import { Profile, Role } from "../types";
+import { namesMatch } from "../utils/nameMatch";
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 async function registerForPushNotificationsAsync() {
   if (Platform.OS === 'web') return null;
@@ -52,22 +54,51 @@ export function ProfileSetup({ user: _user, onSave }: { user: FirebaseAuthTypes.
     const token = await registerForPushNotificationsAsync();
     
     try {
-      const callable = functions.httpsCallable("resolveMemberByName");
-      const result = await callable({
-        displayName: name.trim(),
-        familyCode: code.trim().toLowerCase(),
-        role,
-        pushToken: token || null,
-      });
-      const data = result?.data as { token?: string; profile?: Profile } | undefined;
-      if (!data?.token || !data?.profile) {
-        throw new Error("Invalid login response.");
+      const displayName = name.trim();
+      const familyCode = code.trim().toLowerCase();
+      const membersQuery = query(
+        collection(db, "members"),
+        where("familyCode", "==", familyCode)
+      );
+      const snap = await getDocs(membersQuery);
+      const matchingDoc = snap.docs.find((d) => namesMatch(d.data()?.displayName, displayName));
+
+      let profile: Profile;
+      if (matchingDoc) {
+        const docSnap = matchingDoc;
+        const existing = docSnap.data() as Profile;
+        profile = { uid: docSnap.id, ...existing };
+        if (token && token !== existing.pushToken) {
+          await updateDoc(doc(collection(db, "members"), docSnap.id), { pushToken: token });
+          profile.pushToken = token;
+        }
+      } else {
+        const memberRef = doc(collection(db, "members"));
+        profile = {
+          uid: memberRef.id,
+          displayName,
+          familyCode,
+          role,
+          points: 0,
+          pushToken: token || null,
+        };
+        await setDoc(memberRef, profile);
       }
-      await signInWithCustomToken(auth, data.token);
-      onSave(data.profile);
+
+      await AsyncStorage.setItem("memberUid", profile.uid);
+      onSave(profile);
     } catch (error) {
       console.error("Error saving profile:", error);
-      Alert.alert("Error", "Could not save profile. Please try again.");
+      const err = error as { code?: string; message?: string; details?: unknown } | null;
+      const detailsText = err?.details
+        ? (typeof err.details === "string" ? err.details : JSON.stringify(err.details))
+        : null;
+      const parts = [
+        err?.message || "Could not save profile. Please try again.",
+        err?.code ? `Code: ${err.code}` : null,
+        detailsText ? `Details: ${detailsText}` : null,
+      ].filter(Boolean);
+      Alert.alert("Error", parts.join("\n"));
     }
   };
 

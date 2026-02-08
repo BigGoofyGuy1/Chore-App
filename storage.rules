@@ -2,25 +2,13 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // Helper to check if the user is authenticated
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Correctly lookup the familyCode from Firestore
-    // Note: requires 'firestore.' prefix in Storage rules
-    function getFamilyCode(userId) {
-      return firestore.get(/databases/(default)/documents/members/$(userId)).data.familyCode;
-    }
-
     match /choreProofs/{familyCode}/{fileName} {
-      // Reads don't have request.resource, so keep read and write checks separate.
-      allow read: if isSignedIn() &&
-                  (getFamilyCode(request.auth.uid) == familyCode);
-
+      allow read: if isSignedIn();
       allow write: if isSignedIn() &&
-                   (getFamilyCode(request.auth.uid) == familyCode) &&
                    request.resource.size < 10 * 1024 * 1024 && // Max 10MB
                    request.resource.contentType.matches('image/.*'); // Any image type
     }

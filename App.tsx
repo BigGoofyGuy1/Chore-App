@@ -361,7 +361,14 @@ export default function App() {
       case "Store":
         return <StoreScreen profile={profile} rewards={rewards} familyMembers={familyMembers} />;
       case "Family":
-        return <FamilyScreen profile={profile} familyMembers={familyMembers} onSignOut={handleSignOut} />;
+        return (
+          <FamilyScreen
+            profile={profile}
+            familyMembers={familyMembers}
+            onSignOut={handleSignOut}
+            onOpenSettings={profile.role === "parent" ? () => setActiveTab("Settings") : undefined}
+          />
+        );
       case "Settings":
         return (
           <ParentSettingsScreen
@@ -411,7 +418,6 @@ export default function App() {
             <NavBtn label="Review" active={activeTab === "Review"} onPress={() => setActiveTab("Review")} />
             <NavBtn label="Assign" active={activeTab === "Assign"} onPress={() => setActiveTab("Assign")} />
             <NavBtn label="Store" active={activeTab === "Store"} onPress={() => setActiveTab("Store")} />
-            <NavBtn label="Settings" active={activeTab === "Settings"} onPress={() => setActiveTab("Settings")} />
             <NavBtn label="Family" active={activeTab === "Family"} onPress={() => setActiveTab("Family")} />
           </>
         )}

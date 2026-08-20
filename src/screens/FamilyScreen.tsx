@@ -1,22 +1,37 @@
 import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { InviteCard } from '../components/InviteCard';
 import { Profile } from '../types';
 
 interface FamilyScreenProps {
   profile: Profile;
   familyMembers: Profile[];
   onSignOut: () => void;
+  onOpenSettings?: () => void;
 }
 
-export const FamilyScreen: React.FC<FamilyScreenProps> = ({ profile, familyMembers, onSignOut }) => {
+export const FamilyScreen: React.FC<FamilyScreenProps> = ({
+  profile,
+  familyMembers,
+  onSignOut,
+  onOpenSettings,
+}) => {
   const validMembers = useMemo(() => familyMembers.filter(m => m.displayName?.trim()), [familyMembers]);
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.title}>Family Hub</Text>
-
-      {profile.role === 'parent' ? <InviteCard /> : null}
+      <View style={styles.header}>
+        <Text style={styles.title}>Family Hub</Text>
+        {profile.role === 'parent' && onOpenSettings ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open parent settings"
+            style={styles.settingsButton}
+            onPress={onOpenSettings}
+          >
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
       
       <View style={styles.formCard}>
         <Text style={styles.sectionTitle}>Balances</Text>
@@ -38,7 +53,19 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({ profile, familyMembe
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 40 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 24, fontWeight: '700', color: '#0F172A' },
+  settingsButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  settingsIcon: { fontSize: 20, lineHeight: 22, color: '#475569' },
   formCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, marginTop: 20, borderWidth: 1, borderColor: '#E2E8F0', width: '100%' },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 15 },
   miniChoreRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#F1F5F9' },

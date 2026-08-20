@@ -3,7 +3,6 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View
 import { Chore, Profile } from '../types';
 import { namesMatch } from '../utils/nameMatch';
 import { toDate } from '../utils/date';
-import { InviteCard } from '../components/InviteCard';
 
 interface ParentDashboardProps {
   profile: Profile;
@@ -100,8 +99,6 @@ export const ParentDashboard: React.FC<ParentDashboardProps> = ({
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Parent Review</Text>
-
-      <InviteCard />
 
       <View style={[styles.section, styles.myChoresSection]}>
         <View style={styles.sectionHeader}>

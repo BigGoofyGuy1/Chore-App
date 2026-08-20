@@ -12,7 +12,11 @@ type Invite = {
 
 const buildInviteUrl = (code: string) => `choreapp://join?code=${encodeURIComponent(code)}`;
 
-export const InviteCard: React.FC = () => {
+type InviteCardProps = {
+  familyCode: string;
+};
+
+export const InviteCard: React.FC<InviteCardProps> = ({ familyCode }) => {
   const [latestInvite, setLatestInvite] = useState<Invite | null>(null);
   const [creatingRole, setCreatingRole] = useState<InviteRole | null>(null);
   const [sharingInvite, setSharingInvite] = useState(false);
@@ -20,7 +24,7 @@ export const InviteCard: React.FC = () => {
   const handleCreateInvite = async (role: InviteRole) => {
     setCreatingRole(role);
     try {
-      const result = await createInvite({ role });
+      const result = await createInvite({ role, familyCode });
       const invite = { code: result.code, role, url: buildInviteUrl(result.code) };
       setLatestInvite(invite);
       Alert.alert(

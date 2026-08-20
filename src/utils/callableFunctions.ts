@@ -24,6 +24,7 @@ type CreateFamilyResult = {
 
 type CreateInviteParams = {
   role?: "parent" | "child";
+  familyCode?: string;
   ttlHours?: number;
   uses?: number;
 };
@@ -70,7 +71,7 @@ async function callPublicCallable<T>(functionName: string, data?: Record<string,
     throw new Error("You must be signed in.");
   }
 
-  const idToken = await currentUser.getIdToken();
+  const idToken = await currentUser.getIdToken(true);
   const response = await fetch(getCallableUrl(functionName), {
     method: "POST",
     headers: {

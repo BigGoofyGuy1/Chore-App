@@ -273,6 +273,34 @@ async function getMember(uid) {
   return snap.exists ? snap.data() : null;
 }
 
+async function getParentMembership(uid, requestedFamilyCode) {
+  const member = await getMember(uid);
+  const familyCode = normalizeName(requestedFamilyCode).toUpperCase();
+
+  if (
+    member?.role === "parent" &&
+    (!familyCode || normalizeName(member.familyCode).toUpperCase() === familyCode)
+  ) {
+    return member;
+  }
+
+  // The family owner record is an independent server-written source of truth.
+  // This supports older parent records without allowing the client to assert a role.
+  if (familyCode) {
+    const familySnap = await db.collection("families").doc(familyCode).get();
+    const family = familySnap.exists ? familySnap.data() : null;
+    if (family?.ownerUid === uid) {
+      return {
+        ...(member || {}),
+        familyCode,
+        role: "parent",
+      };
+    }
+  }
+
+  return null;
+}
+
 const createFamilyHandler = async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
@@ -355,8 +383,13 @@ const createInviteHandler = async (data, context) => {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
   }
 
-  const member = await getMember(context.auth.uid);
-  if (!member || member.role !== "parent") {
+  const requestedFamilyCode = normalizeName(data?.familyCode).toUpperCase();
+  const member = await getParentMembership(context.auth.uid, requestedFamilyCode);
+  if (!member) {
+    console.warn("Invite creation denied: parent membership not found", {
+      uid: context.auth.uid,
+      requestedFamilyCode: requestedFamilyCode || null,
+    });
     throw new functions.https.HttpsError("permission-denied", "Parent access required.");
   }
   requireVerifiedEmail(context, "A verified parent email is required to create invites.");

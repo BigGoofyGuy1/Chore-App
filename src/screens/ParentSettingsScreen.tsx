@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { collection, doc, serverTimestamp, setDoc } from '@react-native-firebase/firestore';
+import { InviteCard } from '../components/InviteCard';
 import { db } from '../firebase';
 import { Chore, FamilySettings, Profile } from '../types';
 import {
@@ -290,6 +291,8 @@ export const ParentSettingsScreen: React.FC<ParentSettingsScreenProps> = ({
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Parent Settings</Text>
+
+      <InviteCard familyCode={profile.familyCode} />
 
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Reminder Schedule</Text>

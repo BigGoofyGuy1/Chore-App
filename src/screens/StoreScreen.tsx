@@ -11,9 +11,10 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  updateDoc,
   where
 } from '@react-native-firebase/firestore';
-import { PointsLog, Profile, Reward } from '../types';
+import { PointsLog, Profile, Redemption, Reward } from '../types';
 import { RewardCard } from '../components/RewardCard';
 
 interface StoreScreenProps {
@@ -28,10 +29,11 @@ type CollapsibleCardProps = {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
 };
 
-const CollapsibleCard: React.FC<CollapsibleCardProps> = ({ title, subtitle, children }) => {
-  const [open, setOpen] = useState(false);
+const CollapsibleCard: React.FC<CollapsibleCardProps> = ({ title, subtitle, children, defaultOpen = false }) => {
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <View style={styles.card}>
@@ -64,6 +66,8 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
   const [memberLogs, setMemberLogs] = useState<PointsLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsModalVisible, setLogsModalVisible] = useState(false);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  const [redemptionActionId, setRedemptionActionId] = useState<string | null>(null);
 
   const currentMember = familyMembers.find(m => m.uid === profile.uid);
   const selectedMember = familyMembers.find(m => m.uid === selectedMemberId) || null;
@@ -99,17 +103,45 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
   }, [profile?.familyCode, selectedMemberId]);
 
   useEffect(() => {
+    if (!profile?.familyCode) {
+      setRedemptions([]);
+      return;
+    }
+
+    const redemptionsQuery = query(
+      collection(db, 'redemptions'),
+      where('familyCode', '==', profile.familyCode),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(
+      redemptionsQuery,
+      snap => {
+        setRedemptions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Redemption)));
+      },
+      err => console.error('Redemptions Listener Error:', err)
+    );
+
+    return () => unsubscribe();
+  }, [profile?.familyCode]);
+
+  useEffect(() => {
     if (profile.role === 'parent' && !adjMemberId && familyMembers.length > 0) {
       setAdjMemberId(familyMembers[0].uid);
     }
   }, [profile.role, familyMembers, adjMemberId]);
 
   const addReward = async () => {
-    if (!rTitle) return;
+    const title = rTitle.trim();
+    const points = Number(rPoints.trim());
+    if (!title || !Number.isInteger(points) || points <= 0) {
+      Alert.alert('Invalid Reward', 'Enter a title and a positive whole-number point cost.');
+      return;
+    }
     try {
       await addDoc(collection(db, 'rewards'), {
-        title: rTitle.trim(),
-        points: parseInt(rPoints) || 0,
+        title,
+        points,
         familyCode: profile.familyCode
       });
       setRTitle('');
@@ -117,6 +149,21 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'Failed to add reward.');
+    }
+  };
+
+  const togglePinnedReward = async (reward: Reward) => {
+    if (!currentMember) {
+      Alert.alert('Profile Not Ready', 'Your family profile is still loading.');
+      return;
+    }
+    try {
+      await updateDoc(doc(collection(db, 'members'), currentMember.uid), {
+        pinnedRewardId: currentMember.pinnedRewardId === reward.id ? null : reward.id,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unable to update your reward goal.';
+      Alert.alert('Goal Update Failed', message);
     }
   };
 
@@ -177,8 +224,153 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
     }
   };
 
-  const handleClaim = (reward: Reward) => {
-    Alert.alert('Claimed!', `Go show your parent that you want: ${reward.title}. They will deduct the points once you receive it.`);
+  const requestRedemption = async (reward: Reward) => {
+    if (!profile?.familyCode) {
+      Alert.alert('Error', 'Family code is missing.');
+      return;
+    }
+
+    Alert.alert(
+      'Request Reward',
+      `Request "${reward.title}" for ${reward.points} points?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Request',
+          onPress: async () => {
+            try {
+              await runTransaction(db, async transaction => {
+                const memberRef = doc(collection(db, 'members'), profile.uid);
+                const rewardRef = doc(collection(db, 'rewards'), reward.id);
+                const memberSnap = await transaction.get(memberRef);
+                const rewardSnap = await transaction.get(rewardRef);
+                if (!memberSnap.exists) throw new Error('Member does not exist.');
+                if (!rewardSnap.exists) throw new Error('Reward is no longer available.');
+
+                const latestReward = { id: rewardSnap.id, ...rewardSnap.data() } as Reward;
+                if (latestReward.familyCode !== profile.familyCode) {
+                  throw new Error('Reward belongs to another family.');
+                }
+
+                const currentPoints = ((memberSnap.data() as Profile).points || 0);
+                const cost = latestReward.points;
+                if (!Number.isInteger(cost) || cost <= 0) {
+                  throw new Error('Reward has an invalid point cost.');
+                }
+                if (currentPoints < cost) {
+                  throw new Error('Not enough points to request this reward.');
+                }
+
+                const redemptionRef = doc(collection(db, 'redemptions'));
+                transaction.set(redemptionRef, {
+                  rewardId: latestReward.id,
+                  rewardTitle: latestReward.title,
+                  points: cost,
+                  requesterUid: profile.uid,
+                  requesterName: profile.displayName,
+                  familyCode: profile.familyCode,
+                  status: 'pending',
+                  createdAt: serverTimestamp()
+                });
+              });
+
+              Alert.alert('Requested', 'Your reward request was sent for approval.');
+            } catch (e: any) {
+              console.error(e);
+              Alert.alert('Error', e?.message || 'Failed to request reward.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const approveRedemption = async (redemption: Redemption) => {
+    if (profile.role !== 'parent') return;
+    if (redemption.status !== 'pending') return;
+
+    setRedemptionActionId(redemption.id);
+    try {
+      await runTransaction(db, async transaction => {
+        const redemptionRef = doc(collection(db, 'redemptions'), redemption.id);
+        const redemptionSnap = await transaction.get(redemptionRef);
+        if (!redemptionSnap.exists) throw new Error('Request not found.');
+
+        const latest = redemptionSnap.data() as Redemption;
+        if (latest.status !== 'pending') throw new Error('Request already decided.');
+
+        const memberRef = doc(collection(db, 'members'), latest.requesterUid);
+        const memberSnap = await transaction.get(memberRef);
+        if (!memberSnap.exists) throw new Error('Member not found.');
+
+        const currentPoints = ((memberSnap.data() as Profile).points || 0);
+        const cost = Math.abs(latest.points || 0);
+        if (currentPoints < cost) throw new Error('Insufficient points to approve.');
+
+        transaction.update(memberRef, { points: currentPoints - cost });
+        transaction.update(redemptionRef, {
+          status: 'approved',
+          decidedAt: serverTimestamp(),
+          decidedByUid: profile.uid,
+          decidedByName: profile.displayName
+        });
+
+        const logRef = doc(collection(db, 'pointsLogs'));
+        transaction.set(logRef, {
+          familyCode: latest.familyCode,
+          memberUid: latest.requesterUid,
+          memberName: latest.requesterName,
+          pointsDelta: -cost,
+          note: `Reward redeemed: ${latest.rewardTitle}`,
+          createdAt: serverTimestamp(),
+          createdByUid: profile.uid,
+          createdByName: profile.displayName,
+          source: 'redemption'
+        });
+      });
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert('Error', e?.message || 'Failed to approve request.');
+    } finally {
+      setRedemptionActionId(null);
+    }
+  };
+
+  const denyRedemption = async (redemption: Redemption) => {
+    if (profile.role !== 'parent') return;
+    if (redemption.status !== 'pending') return;
+
+    Alert.alert('Deny Request', `Deny "${redemption.rewardTitle}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Deny',
+        style: 'destructive',
+        onPress: async () => {
+          setRedemptionActionId(redemption.id);
+          try {
+            await runTransaction(db, async transaction => {
+              const redemptionRef = doc(collection(db, 'redemptions'), redemption.id);
+              const redemptionSnap = await transaction.get(redemptionRef);
+              if (!redemptionSnap.exists) throw new Error('Request not found.');
+              const latest = redemptionSnap.data() as Redemption;
+              if (latest.status !== 'pending') throw new Error('Request already decided.');
+
+              transaction.update(redemptionRef, {
+                status: 'denied',
+                decidedAt: serverTimestamp(),
+                decidedByUid: profile.uid,
+                decidedByName: profile.displayName
+              });
+            });
+          } catch (e: any) {
+            console.error(e);
+            Alert.alert('Error', e?.message || 'Failed to deny request.');
+          } finally {
+            setRedemptionActionId(null);
+          }
+        }
+      }
+    ]);
   };
 
   const handleDelete = async (reward: Reward) => {
@@ -203,6 +395,21 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
     if (a.role !== b.role) return a.role === 'parent' ? -1 : 1;
     return a.displayName.localeCompare(b.displayName);
   });
+
+  const myRedemptions = redemptions.filter(r => r.requesterUid === profile.uid);
+  const pendingRedemptions = redemptions.filter(r => r.status === 'pending');
+
+  const getRedemptionStatusStyle = (status: Redemption['status']) => {
+    switch (status) {
+      case 'approved':
+        return { label: 'Approved', color: '#10B981' };
+      case 'denied':
+        return { label: 'Denied', color: '#EF4444' };
+      case 'pending':
+      default:
+        return { label: 'Pending', color: '#F59E0B' };
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -269,7 +476,7 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
       )}
 
       {profile.role === 'child' && (
-        <CollapsibleCard title="Your Wallet" subtitle="Tap to view your points">
+        <CollapsibleCard title="Your Wallet" subtitle="Your current points" defaultOpen>
           <View style={[styles.walletCard, { backgroundColor: '#2563EB', alignItems: 'center' }]}>
             <Text style={{ color: '#FFF', fontSize: 16, fontWeight: '600' }}>Your Wallet</Text>
             <Text style={{ color: '#FFF', fontSize: 48, fontWeight: '900' }}>{currentMember?.points || 0}</Text>
@@ -291,6 +498,71 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
           <TouchableOpacity style={styles.secondaryBtn} onPress={addReward}>
             <Text style={styles.secondaryBtnText}>Add New Reward</Text>
           </TouchableOpacity>
+        </CollapsibleCard>
+      )}
+
+      {profile.role === 'parent' && (
+        <CollapsibleCard title="Redemption Requests" subtitle="Approve or deny reward requests">
+          {pendingRedemptions.length === 0 && (
+            <Text style={styles.emptyText}>No pending requests.</Text>
+          )}
+          {pendingRedemptions.map(req => {
+            const status = getRedemptionStatusStyle(req.status);
+            const isBusy = redemptionActionId === req.id;
+            return (
+              <View key={req.id} style={styles.redemptionRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.redemptionTitle}>{req.rewardTitle}</Text>
+                  <Text style={styles.redemptionMeta}>
+                    {req.requesterName} · {req.points} pts · {formatTimestamp(req.createdAt)}
+                  </Text>
+                </View>
+                <View style={styles.redemptionActions}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnSpacer, isBusy && styles.actionBtnDisabled]}
+                    onPress={() => approveRedemption(req)}
+                    disabled={isBusy}
+                  >
+                    <Text style={styles.actionBtnText}>Approve</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.actionBtnDanger, isBusy && styles.actionBtnDisabled]}
+                    onPress={() => denyRedemption(req)}
+                    disabled={isBusy}
+                  >
+                    <Text style={[styles.actionBtnText, styles.actionBtnTextLight]}>Deny</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: status.color }]}>
+                  <Text style={styles.statusPillText}>{status.label}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </CollapsibleCard>
+      )}
+
+      {profile.role === 'child' && (
+        <CollapsibleCard title="My Requests" subtitle="Track your reward requests">
+          {myRedemptions.length === 0 && (
+            <Text style={styles.emptyText}>No requests yet.</Text>
+          )}
+          {myRedemptions.map(req => {
+            const status = getRedemptionStatusStyle(req.status);
+            return (
+              <View key={req.id} style={styles.redemptionRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.redemptionTitle}>{req.rewardTitle}</Text>
+                  <Text style={styles.redemptionMeta}>
+                    {req.points} pts · {formatTimestamp(req.createdAt)}
+                  </Text>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: status.color }]}>
+                  <Text style={styles.statusPillText}>{status.label}</Text>
+                </View>
+              </View>
+            );
+          })}
         </CollapsibleCard>
       )}
 
@@ -316,7 +588,7 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
         })}
       </CollapsibleCard>
 
-      <CollapsibleCard title="Available Rewards" subtitle="Redeem points for rewards">
+      <CollapsibleCard title="Available Rewards" subtitle="Redeem points or pin a goal" defaultOpen={profile.role === 'child'}>
         {rewards.length === 0 && <Text style={styles.emptyText}>No rewards added yet.</Text>}
         {rewards.map(r => (
           <RewardCard
@@ -324,8 +596,10 @@ export const StoreScreen: React.FC<StoreScreenProps> = ({ profile, rewards, fami
             reward={r}
             profile={profile}
             currentMember={currentMember}
-            onClaim={handleClaim}
+            onClaim={requestRedemption}
             onDelete={handleDelete}
+            onPin={togglePinnedReward}
+            isPinned={currentMember?.pinnedRewardId === r.id}
           />
         ))}
       </CollapsibleCard>
@@ -410,17 +684,20 @@ const styles = StyleSheet.create({
   memberChipSub: { color: '#64748B', fontSize: 11 },
   memberChipTextActive: { color: '#EFF6FF' },
   memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  memberRowActive: { backgroundColor: '#F8FAFC' },
   memberName: { fontWeight: '700', color: '#0F172A' },
   memberRole: { color: '#64748B', fontSize: 12 },
   memberPoints: { fontWeight: '800', color: '#10B981' },
-  logSection: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#E2E8F0' },
-  logTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
   logRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   logDelta: { fontWeight: '800', color: '#10B981', marginBottom: 2 },
   logDeltaNegative: { color: '#EF4444' },
   logNote: { color: '#0F172A' },
   logMeta: { color: '#94A3B8', fontSize: 12, marginTop: 2 },
+  redemptionRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  redemptionTitle: { fontWeight: '700', color: '#0F172A' },
+  redemptionMeta: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  redemptionActions: { flexDirection: 'row', marginTop: 10 },
+  statusPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, marginTop: 10 },
+  statusPillText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '80%' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ActivityIndicator, 
   Alert, 
@@ -23,7 +23,9 @@ interface ChoreDetailModalProps {
   onClose: () => void;
   onUploadProof: (chore: Chore) => Promise<void>;
   onApprove: (chore: Chore) => Promise<void>;
+  onRedo: (chore: Chore, feedback: string) => Promise<void>;
   uploading: boolean;
+  deciding?: boolean;
 }
 
 const formatDate = (date: Date) => {
@@ -40,11 +42,23 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
   onClose,
   onUploadProof,
   onApprove,
-  uploading
+  onRedo,
+  uploading,
+  deciding = false,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editPoints, setEditPoints] = useState("0");
+  const [showRedoForm, setShowRedoForm] = useState(false);
+  const [redoFeedback, setRedoFeedback] = useState('');
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setShowRedoForm(false);
+    setRedoFeedback('');
+    setIsEditing(false);
+    setPreviewPhotoUrl(null);
+  }, [chore?.id, visible]);
 
   if (!chore) return null;
   const isAssignee = Boolean(
@@ -65,7 +79,7 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
         points: parseInt(editPoints) || 0,
       });
       setIsEditing(false);
-    } catch (e) {
+    } catch {
       Alert.alert("Error", "Update failed.");
     }
   };
@@ -77,7 +91,7 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
         try {
           await deleteDoc(doc(db, "chores", chore.id));
           onClose();
-        } catch (e) {
+        } catch {
           Alert.alert("Error", "Delete failed.");
         }
       }}
@@ -98,7 +112,19 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={true}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      statusBarTranslucent={previewPhotoUrl !== null}
+      onRequestClose={() => {
+        if (previewPhotoUrl) {
+          setPreviewPhotoUrl(null);
+        } else if (!uploading) {
+          onClose();
+        }
+      }}
+    >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
@@ -149,13 +175,31 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
                   <Text style={styles.detailLabel}>Deadline</Text>
                   <Text style={styles.detailValue}>{chore.dueAt ? formatDate(chore.dueAt.toDate()) : 'None'}</Text>
                 </View>
+
+                {chore.status === 'redo' && chore.feedback ? (
+                  <View style={styles.feedbackCard}>
+                    <Text style={styles.feedbackLabel}>What needs another try</Text>
+                    <Text style={styles.feedbackText}>{chore.feedback}</Text>
+                  </View>
+                ) : null}
                 
                 {chore.photoUrls && chore.photoUrls.length > 0 && (
                   <View style={styles.detailItem}>
                     <Text style={styles.detailLabel}>Proof</Text>
                     <ScrollView horizontal>
-                      {chore.photoUrls.map((u, i) => <Image key={i} source={{ uri: u }} style={styles.galleryImage} />)}
+                      {chore.photoUrls.map((url, index) => (
+                        <TouchableOpacity
+                          key={url}
+                          accessibilityRole="button"
+                          accessibilityLabel={`View proof photo ${index + 1} full screen`}
+                          style={styles.galleryButton}
+                          onPress={() => setPreviewPhotoUrl(url)}
+                        >
+                          <Image source={{ uri: url }} style={styles.galleryImage} />
+                        </TouchableOpacity>
+                      ))}
                     </ScrollView>
+                    <Text style={styles.galleryHint}>Tap a photo to view it full screen.</Text>
                   </View>
                 )}
 
@@ -171,24 +215,59 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
                   )}
                   
                   {profile.role === 'parent' && chore.status === 'submitted' && (
-                    <View style={styles.row}>
-                      <TouchableOpacity 
-                        style={[styles.secondaryBtn, { flex: 1, marginRight: 8 }]} 
-                        onPress={() => { 
-                          Alert.alert("Needs Redo", "Send back?", [
-                            { text: "No" }, 
-                            { text: "Yes", onPress: () => updateDoc(doc(db, "chores", chore.id), { status: "redo", feedback: "Try again." }).then(onClose) }
-                          ]) 
-                        }}
-                      >
-                        <Text style={styles.secondaryBtnText}>Redo</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={[styles.approveBtn, { flex: 2 }]} 
-                        onPress={() => onApprove(chore)}
-                      >
-                        <Text style={styles.primaryBtnText}>Approve & Pay</Text>
-                      </TouchableOpacity>
+                    <View>
+                      {showRedoForm ? (
+                        <View style={styles.redoCard}>
+                          <Text style={styles.inputLabel}>What specifically needs another try?</Text>
+                          <TextInput
+                            style={[styles.input, styles.redoInput]}
+                            value={redoFeedback}
+                            onChangeText={setRedoFeedback}
+                            multiline
+                            placeholder="Example: Please wipe the counter behind the toaster too."
+                            placeholderTextColor="#94A3B8"
+                          />
+                          <View style={styles.row}>
+                            <TouchableOpacity
+                              accessibilityRole="button"
+                              style={[styles.secondaryBtn, styles.flexButton, styles.buttonSpacer]}
+                              disabled={deciding}
+                              onPress={() => setShowRedoForm(false)}
+                            >
+                              <Text style={styles.secondaryBtnText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              accessibilityRole="button"
+                              style={[styles.redoBtn, styles.flexButton, deciding && styles.disabledBtn]}
+                              disabled={deciding}
+                              onPress={async () => {
+                                await onRedo(chore, redoFeedback);
+                              }}
+                            >
+                              <Text style={styles.primaryBtnText}>Send Back</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : (
+                        <View style={styles.row}>
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            style={[styles.secondaryBtn, styles.flexButton, styles.buttonSpacer]}
+                            disabled={deciding}
+                            onPress={() => setShowRedoForm(true)}
+                          >
+                            <Text style={styles.secondaryBtnText}>Needs Redo</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            style={[styles.approveBtn, styles.flexButton, deciding && styles.disabledBtn]}
+                            disabled={deciding}
+                            onPress={() => onApprove(chore)}
+                          >
+                            <Text style={styles.primaryBtnText}>Approve & Pay</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   )}
 
@@ -228,6 +307,24 @@ export const ChoreDetailModal: React.FC<ChoreDetailModalProps> = ({
             )}
           </ScrollView>
         </View>
+        {previewPhotoUrl ? (
+          <View style={styles.proofViewer}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Close full-screen proof photo"
+              style={styles.proofCloseButton}
+              onPress={() => setPreviewPhotoUrl(null)}
+            >
+              <Text style={styles.proofCloseText}>Close</Text>
+            </TouchableOpacity>
+            <Image
+              accessibilityLabel="Full-screen chore proof"
+              source={{ uri: previewPhotoUrl }}
+              style={styles.proofFullImage}
+              resizeMode="contain"
+            />
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -247,14 +344,29 @@ const styles = StyleSheet.create({
   checkboxActive: { backgroundColor: '#10B981', borderColor: '#10B981' },
   stepText: { fontSize: 16 },
   stepTextDone: { textDecorationLine: 'line-through', color: '#94A3B8' },
-  galleryImage: { width: 100, height: 100, borderRadius: 12, marginRight: 10 },
+  galleryButton: { marginRight: 10, borderRadius: 12, overflow: 'hidden' },
+  galleryImage: { width: 100, height: 100 },
+  galleryHint: { color: '#64748B', fontSize: 12, marginTop: 8 },
+  proofViewer: { ...StyleSheet.absoluteFill, zIndex: 10, elevation: 10, backgroundColor: 'rgba(0, 0, 0, 0.97)', alignItems: 'center', justifyContent: 'center' },
+  proofCloseButton: { position: 'absolute', top: 48, right: 20, zIndex: 1, borderRadius: 999, backgroundColor: 'rgba(15, 23, 42, 0.8)', paddingHorizontal: 18, paddingVertical: 10 },
+  proofCloseText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
+  proofFullImage: { width: '100%', height: '100%' },
   modalActions: { marginTop: 20 },
   primaryBtn: { backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 14, alignItems: 'center', width: '100%' },
   primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
   secondaryBtn: { backgroundColor: '#F1F5F9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', width: '100%' },
   secondaryBtnText: { color: '#0F172A', fontWeight: '600' },
   approveBtn: { backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  redoBtn: { backgroundColor: '#EF4444', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   row: { flexDirection: 'row', alignItems: 'center' },
+  flexButton: { flex: 1, width: undefined },
+  buttonSpacer: { marginRight: 8 },
+  disabledBtn: { opacity: 0.6 },
+  redoCard: { backgroundColor: '#FFF7ED', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#FED7AA' },
+  redoInput: { minHeight: 90, textAlignVertical: 'top' },
+  feedbackCard: { backgroundColor: '#FEF2F2', borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
+  feedbackLabel: { color: '#B91C1C', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  feedbackText: { color: '#7F1D1D', fontSize: 15, lineHeight: 21, marginTop: 5 },
   formCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#E2E8F0', width: '100%' },
   inputLabel: { fontSize: 14, fontWeight: '600', color: '#475569', marginBottom: 8, marginTop: 16 },
   input: { backgroundColor: '#F8FAFC', borderRadius: 10, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#E2E8F0', color: '#0F172A' },

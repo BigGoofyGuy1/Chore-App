@@ -4,6 +4,23 @@ export type ChoreStatus = "pending" | "in_progress" | "submitted" | "redo" | "ap
 
 export type RepeatInterval = "none" | "daily" | "weekly" | "monthly";
 
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type ChoreSchedule = {
+  weekdays: Weekday[];
+  hour: number;
+  minute: number;
+  timezone?: string;
+};
+
+export type WeeklyConsistency = {
+  weekKey: string;
+  completedDays: string[];
+  goalDays: number;
+  bonusPoints: number;
+  bonusAwarded: boolean;
+};
+
 export type Profile = {
   uid: string;
   displayName: string;
@@ -11,6 +28,22 @@ export type Profile = {
   role: Role;
   points?: number;
   pushToken?: string;
+  pinnedRewardId?: string | null;
+  weeklyConsistency?: WeeklyConsistency;
+};
+
+export type FamilyReminderSettings = {
+  morningReminderHour: number;
+  morningReminderMinute: number;
+  finalReminderLeadMinutes: number;
+};
+
+export type FamilySettings = {
+  familyCode: string;
+  reminderSettings: FamilyReminderSettings;
+  updatedAt?: any;
+  updatedByUid?: string | null;
+  updatedByName?: string | null;
 };
 
 export type Chore = {
@@ -35,6 +68,29 @@ export type Chore = {
   archived?: boolean;
   archivedAt?: any;
   sourceChoreId?: string;
+  templateId?: string | null;
+  scheduledDate?: string | null;
+  required?: boolean;
+};
+
+export type ChoreTemplate = {
+  id: string;
+  title: string;
+  description?: string;
+  points: number;
+  assignedTo: string;
+  assignedToUid?: string | null;
+  isBounty?: boolean;
+  required: boolean;
+  familyCode: string;
+  steps?: string[];
+  schedule: ChoreSchedule;
+  nextDueAt?: unknown;
+  active: boolean;
+  createdAt?: any;
+  updatedAt?: any;
+  createdByUid?: string;
+  createdByName?: string;
 };
 
 export type Reward = {
@@ -61,7 +117,7 @@ export type Redemption = {
   decidedByName?: string;
 };
 
-export type PointsLogSource = "manual_adjustment" | "chore_approved";
+export type PointsLogSource = "manual_adjustment" | "chore_approved" | "redemption" | "weekly_consistency_bonus";
 
 export type PointsLog = {
   id: string;

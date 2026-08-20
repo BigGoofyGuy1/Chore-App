@@ -1,74 +1,69 @@
 # Chore App (Firebase + Expo)
 
-A lightweight mobile app for parents to send chores to their kids' devices and get photo proof when each chore is done. Uses Firebase Firestore for real-time updates and Firebase Storage for photos. Built with Expo for quick Android sideloads.
+A family chore app for assigning work, earning rewards, and submitting photo proof. The mobile client uses Expo 57 and React Native Firebase; Cloud Functions own family creation and invite membership changes.
 
-## Prerequisites
-- Node.js 18+
-- Expo CLI (`npm install -g expo`) and EAS CLI for building APKs (`npm install -g eas-cli`)
-- A Firebase project with Firestore + Storage enabled
+## Requirements
 
-## Setup
-1) Install dependencies:
+- Node.js 22 (matches the Cloud Functions runtime)
+- Java 21 for the local Firebase emulators and Android builds
+- A Firebase project with Authentication, Firestore, Storage, and Functions enabled
+- EAS CLI for installable Android builds
+
+## Firebase setup
+
+1. Enable **Email/Password** and **Anonymous** providers in Firebase Authentication.
+2. Put the Android `google-services.json` at the project root.
+3. Copy `src/firebaseConfig.example.ts` to `src/firebaseConfig.ts` and enter the Firebase web-app values.
+4. Deploy the protected backend configuration:
+
+```bash
+firebase deploy --only functions,firestore:rules,firestore:indexes,storage
+```
+
+Do not replace the checked-in rules with open development rules. The app depends on them to keep invites server-only, limit children to eligible chores and proof photos, and isolate push tokens in `memberPrivate/{uid}`.
+
+## Install and verify
+
 ```bash
 npm install
+npm run typecheck
+npm run lint
+npm test
+npm run test:rules
 ```
-2) (Native) Add Google Services config:
-   - Download `google-services.json` from Firebase Console and place it at the project root.
-   - `app.json` references it via `android.googleServicesFile`.
-3) Create your Firebase config file:
+
+`npm run test:rules` starts local Firestore and Storage emulators and verifies the parent/child privacy boundaries.
+
+## Run locally
+
 ```bash
-cp src/firebaseConfig.example.ts src/firebaseConfig.ts
-# Edit src/firebaseConfig.ts with your Firebase keys
-```
-3) Ensure Firebase services are enabled:
-   - Firestore (in Native mode) and Storage.
-   - For quick testing without auth, you can use very open rules; tighten before production:
-```js
-// Firestore rules (development only)
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true; // replace with proper auth before release
-    }
-  }
-}
-
-// Storage rules (development only)
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read, write: if true; // replace with proper auth before release
-    }
-  }
-}
+npm run android
 ```
 
-## Run the app
+Expo Go is not supported because the app uses native React Native Firebase modules. Native Android files are generated from `app.json` and are intentionally not committed.
+
+## Account and family flow
+
+- A parent registers with email/password, verifies the email, then creates a family.
+- A parent creates a role-specific invite from the app.
+- A child taps **Join as a Child**, signs in anonymously, and enters the child invite code. No child email address is required.
+- A second parent signs in with a verified email account and uses a parent invite.
+
+An anonymous child account belongs to that app installation. Clearing app data or uninstalling before the account is upgraded will disconnect that device; the parent must create a new child invite.
+
+## Build an installable Android APK
+
 ```bash
-npm run start   # then press 'a' to open in Android emulator/device
+eas build --platform android --profile preview
 ```
-- On first launch choose **Parent** or **Child**, enter a shared family code, and your name.
-- Parents add chores (title + child name). Kids see chores assigned to their name and upload a photo to mark done.
 
-## Build an Android APK for sideloading
-Local APK build (no store submission):
-```bash
-eas build -p android --profile preview --local
-```
-- Output APK will be under `dist/` (default EAS output path); copy to device to sideload.
-- You can also use the Expo-managed build service if you prefer remote builds.
+The `preview` profile produces an internally distributed APK for sideloading. The `production` profile produces an Android App Bundle for store submission.
 
-## Folder structure
-- `App.tsx` — main UI (role selection, parent/child views, chore list, upload flow)
-- `src/firebase.ts` — Firebase initialization (Firestore + Storage)
-- `src/types.ts` — shared TypeScript types
-- `src/firebaseConfig.example.ts` — sample Firebase config; copy to `src/firebaseConfig.ts`
-- `eas.json` — EAS config with an Android APK build profile
+## Security-sensitive paths
 
-## Notes
-- Native builds use **React Native Firebase**; Expo Go is not supported. Use EAS dev client or prebuild.
-- App uses **anonymous auth** (no email/password) for now. Clearing app data will create a new user.
-- Images are uploaded to `choreProofs/{familyCode}/...` and download URLs are saved on the chore document.
-- Firestore may prompt you to create an index for `familyCode + createdAt` on first run; accept the link in the console to generate it.
+- Proof photos: `choreProofs/{familyCode}/{choreId}/{fileName}`
+- Private device tokens: `memberPrivate/{uid}`
+- Public family membership: `members/{uid}`
+- Callable membership operations: `functions/index.js`
+
+Parents can read all family chores and proof photos. Children can read their assigned chores, legacy name-assigned chores, and unclaimed bounties; sibling chores, sibling proofs, templates, and sibling push tokens are denied by the backend rules.

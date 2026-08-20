@@ -1,8 +1,378 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function memberRef(uid) {
+      return /databases/$(database)/documents/members/$(uid);
+    }
+
+    function memberDoc(uid) {
+      return get(memberRef(uid));
+    }
+
+    function rewardRef(rewardId) {
+      return /databases/$(database)/documents/rewards/$(rewardId);
+    }
+
+    function isKnownMember() {
+      return isSignedIn() && exists(memberRef(request.auth.uid));
+    }
+
+    function myMember() {
+      return memberDoc(request.auth.uid).data;
+    }
+
+    function myFamilyCode() {
+      return myMember().familyCode;
+    }
+
+    function myDisplayName() {
+      return myMember().displayName;
+    }
+
+    function isParent() {
+      return isKnownMember() && myMember().role == "parent";
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isMemberInFamily(uid, familyCode) {
+      return uid == null || (
+        exists(memberRef(uid)) &&
+        memberDoc(uid).data.familyCode == familyCode
+      );
+    }
+
+    function isFamilyDocument(familyCode) {
+      return isKnownMember() && familyCode == myFamilyCode();
+    }
+
+    function isParentInFamily(familyCode) {
+      return isParent() && familyCode == myFamilyCode();
+    }
+
+    function isAssignedToMe(data) {
+      return data.keys().hasAll(["assignedToUid"]) &&
+        data.assignedToUid == request.auth.uid;
+    }
+
+    function isLegacyChoreAssignedToMe(data) {
+      return data.keys().hasAll(["assignedTo", "assignedToUid"]) &&
+        data.assignedToUid == null &&
+        data.assignedTo == myDisplayName();
+    }
+
+    function isUnclaimedBounty(data) {
+      return data.keys().hasAll(["isBounty", "assignedToUid"]) &&
+        data.isBounty == true &&
+        data.assignedToUid == null;
+    }
+
+    function canReadChore(data) {
+      return isFamilyDocument(data.familyCode) &&
+        (
+          isParent() ||
+          isAssignedToMe(data) ||
+          isLegacyChoreAssignedToMe(data) ||
+          isUnclaimedBounty(data)
+        );
+    }
+
+    function validPrivateMemberData(data) {
+      return data.keys().hasOnly(["familyCode", "pushToken", "updatedAt"]) &&
+        data.keys().hasAll(["familyCode", "pushToken", "updatedAt"]) &&
+        data.familyCode == myFamilyCode() &&
+        data.pushToken is string &&
+        data.pushToken.size() > 0 &&
+        data.pushToken.size() <= 256 &&
+        data.updatedAt == request.time;
+    }
+
+    function sameKeys(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function canSubmitAssignedChore() {
+      return resource.data.assignedToUid == request.auth.uid &&
+        request.resource.data.assignedToUid == resource.data.assignedToUid &&
+        request.resource.data.assignedTo == resource.data.assignedTo;
+    }
+
+    function canClaimAndSubmitBounty() {
+      return resource.data.isBounty == true &&
+        resource.data.assignedToUid == null &&
+        request.resource.data.assignedToUid == request.auth.uid &&
+        request.resource.data.assignedTo == myDisplayName();
+    }
+
+    function validChoreCreate() {
+      return request.resource.data.familyCode == myFamilyCode() &&
+        request.resource.data.status == "pending" &&
+        request.resource.data.archivedAt == null &&
+        isMemberInFamily(request.resource.data.assignedToUid, request.resource.data.familyCode);
+    }
+
+    function validParentChoreUpdate() {
+      return request.resource.data.familyCode == resource.data.familyCode &&
+        request.resource.data.familyCode == myFamilyCode() &&
+        isMemberInFamily(request.resource.data.assignedToUid, request.resource.data.familyCode) &&
+        validParentChoreStatusTransition();
+    }
+
+    function completedMemberUid() {
+      return resource.data.keys().hasAll(["completedByUid"]) && resource.data.completedByUid != null
+        ? resource.data.completedByUid
+        : resource.data.assignedToUid;
+    }
+
+    function validChoreApproval() {
+      return resource.data.status == "submitted" &&
+        request.resource.data.status == "approved" &&
+        completedMemberUid() != null &&
+        exists(memberRef(completedMemberUid())) &&
+        memberDoc(completedMemberUid()).data.familyCode == resource.data.familyCode &&
+        resource.data.points >= 0 &&
+        getAfter(memberRef(completedMemberUid())).data.points ==
+          memberDoc(completedMemberUid()).data.points + resource.data.points;
+    }
+
+    function validParentChoreStatusTransition() {
+      return request.resource.data.status == resource.data.status ||
+        (resource.data.status == "submitted" && request.resource.data.status == "redo") ||
+        validChoreApproval();
+    }
+
+    function validChildStepUpdate() {
+      return sameKeys(["steps", "status"]) &&
+        resource.data.assignedToUid == request.auth.uid &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        resource.data.status in ["pending", "in_progress", "redo"] &&
+        request.resource.data.status == "in_progress";
+    }
+
+    function validChildSubmission() {
+      return sameKeys([
+          "status",
+          "photoUrls",
+          "completedBy",
+          "completedByUid",
+          "completedAt",
+          "assignedTo",
+          "assignedToUid"
+        ]) &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        request.resource.data.status == "submitted" &&
+        request.resource.data.completedByUid == request.auth.uid &&
+        request.resource.data.completedBy == myDisplayName() &&
+        resource.data.status in ["pending", "in_progress", "redo"] &&
+        (canSubmitAssignedChore() || canClaimAndSubmitBounty());
+    }
+
+    function validRewardData(data) {
+      return data.keys().hasOnly(["title", "points", "familyCode"]) &&
+        data.title is string &&
+        data.title.size() > 0 &&
+        data.title.size() <= 120 &&
+        data.points is int &&
+        data.points > 0;
+    }
+
+    function validTemplateData(data) {
+      return data.familyCode == myFamilyCode() &&
+        data.title is string &&
+        data.title.size() > 0 &&
+        data.title.size() <= 120 &&
+        data.points is int &&
+        data.points >= 0 &&
+        data.required is bool &&
+        data.active is bool &&
+        isMemberInFamily(data.assignedToUid, data.familyCode) &&
+        data.schedule is map &&
+        data.schedule.weekdays is list &&
+        data.schedule.weekdays.size() > 0 &&
+        data.schedule.hour is int &&
+        data.schedule.hour >= 0 &&
+        data.schedule.hour <= 23 &&
+        data.schedule.minute is int &&
+        data.schedule.minute >= 0 &&
+        data.schedule.minute <= 59;
+    }
+
+    function validRedemptionCreate() {
+      return request.resource.data.keys().hasOnly([
+          "rewardId",
+          "rewardTitle",
+          "points",
+          "requesterUid",
+          "requesterName",
+          "familyCode",
+          "status",
+          "createdAt"
+        ]) &&
+        request.resource.data.familyCode == myFamilyCode() &&
+        request.resource.data.requesterUid == request.auth.uid &&
+        request.resource.data.requesterName == myDisplayName() &&
+        request.resource.data.status == "pending" &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.rewardId is string &&
+        exists(rewardRef(request.resource.data.rewardId)) &&
+        get(rewardRef(request.resource.data.rewardId)).data.familyCode == myFamilyCode() &&
+        request.resource.data.rewardTitle == get(rewardRef(request.resource.data.rewardId)).data.title &&
+        request.resource.data.points == get(rewardRef(request.resource.data.rewardId)).data.points &&
+        request.resource.data.points is int &&
+        request.resource.data.points > 0;
+    }
+
+    function validApprovedRedemptionBalance() {
+      return request.resource.data.status == "approved" &&
+        resource.data.points > 0 &&
+        exists(memberRef(resource.data.requesterUid)) &&
+        memberDoc(resource.data.requesterUid).data.familyCode == resource.data.familyCode &&
+        getAfter(memberRef(resource.data.requesterUid)).data.points >= 0 &&
+        getAfter(memberRef(resource.data.requesterUid)).data.points ==
+          memberDoc(resource.data.requesterUid).data.points - resource.data.points;
+    }
+
+    match /members/{uid} {
+      allow read: if isSelf(uid) || (
+        isParent() && resource.data.familyCode == myFamilyCode()
+      );
+      allow create, delete: if false;
+      allow update: if (
+          isSelf(uid) &&
+          request.resource.data.familyCode == resource.data.familyCode &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.points == resource.data.points &&
+          sameKeys(["displayName", "pinnedRewardId"])
+        ) || (
+          isParent() &&
+          resource.data.familyCode == myFamilyCode() &&
+          request.resource.data.familyCode == resource.data.familyCode &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.displayName == resource.data.displayName &&
+          sameKeys(["points", "weeklyConsistency"])
+        );
+    }
+
+    match /memberPrivate/{uid} {
+      allow read: if isSelf(uid) || (
+        isParent() && resource.data.familyCode == myFamilyCode()
+      );
+      allow create: if isSelf(uid) && isKnownMember() &&
+        validPrivateMemberData(request.resource.data);
+      allow update: if isSelf(uid) && isKnownMember() &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        validPrivateMemberData(request.resource.data);
+      allow delete: if isSelf(uid);
+    }
+
+    match /membersPublic/{uid} {
+      allow read: if isSelf(uid) || (isKnownMember() && resource.data.familyCode == myFamilyCode());
+      allow write: if false;
+    }
+
+    match /families/{familyCode} {
+      allow read: if isFamilyDocument(familyCode);
+      allow create, delete: if false;
+      allow update: if isParent() &&
+        familyCode == myFamilyCode() &&
+        request.resource.data.familyCode == familyCode &&
+        request.resource.data.ownerUid == resource.data.ownerUid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        sameKeys([
+          "familyCode",
+          "reminderSettings",
+          "updatedAt",
+          "updatedByUid",
+          "updatedByName"
+        ]) &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updatedByName == myDisplayName();
+    }
+
+    match /chores/{choreId} {
+      allow read: if canReadChore(resource.data);
+      allow create: if isParent() && validChoreCreate();
+      allow delete: if isParent() && isFamilyDocument(resource.data.familyCode);
+      allow update: if (
+          isParent() &&
+          isFamilyDocument(resource.data.familyCode) &&
+          validParentChoreUpdate()
+        ) || (
+          isKnownMember() &&
+          resource.data.familyCode == myFamilyCode() &&
+          (
+            validChildStepUpdate() ||
+            validChildSubmission()
+          ));
+    }
+
+    match /choreTemplates/{templateId} {
+      allow read: if isParentInFamily(resource.data.familyCode);
+      allow create: if isParent() && validTemplateData(request.resource.data);
+      allow update: if isParent() &&
+        resource.data.familyCode == myFamilyCode() &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        validTemplateData(request.resource.data);
+      allow delete: if isParent() && resource.data.familyCode == myFamilyCode();
+    }
+
+    match /rewards/{rewardId} {
+      allow read: if isFamilyDocument(resource.data.familyCode);
+      allow create: if isParent() &&
+        request.resource.data.familyCode == myFamilyCode() &&
+        validRewardData(request.resource.data);
+      allow update: if isParent() &&
+        resource.data.familyCode == myFamilyCode() &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        validRewardData(request.resource.data);
+      allow delete: if isParent() && resource.data.familyCode == myFamilyCode();
+    }
+
+    match /redemptions/{redemptionId} {
+      allow read: if isFamilyDocument(resource.data.familyCode);
+      allow create: if isKnownMember() &&
+        validRedemptionCreate();
+      allow update: if isParent() &&
+        resource.data.familyCode == myFamilyCode() &&
+        resource.data.status == "pending" &&
+        request.resource.data.familyCode == resource.data.familyCode &&
+        request.resource.data.requesterUid == resource.data.requesterUid &&
+        request.resource.data.requesterName == resource.data.requesterName &&
+        request.resource.data.rewardId == resource.data.rewardId &&
+        request.resource.data.rewardTitle == resource.data.rewardTitle &&
+        request.resource.data.points == resource.data.points &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.decidedByUid == request.auth.uid &&
+        request.resource.data.decidedByName == myDisplayName() &&
+        request.resource.data.decidedAt == request.time &&
+        request.resource.data.status in ["approved", "denied"] &&
+        sameKeys(["status", "decidedAt", "decidedByUid", "decidedByName"]) &&
+        (request.resource.data.status == "denied" || validApprovedRedemptionBalance());
+      allow delete: if false;
+    }
+
+    match /pointsLogs/{logId} {
+      allow read: if isFamilyDocument(resource.data.familyCode);
+      allow create: if isParent() &&
+        request.resource.data.familyCode == myFamilyCode() &&
+        request.resource.data.createdByUid == request.auth.uid &&
+        request.resource.data.createdByName == myDisplayName() &&
+        isMemberInFamily(request.resource.data.memberUid, request.resource.data.familyCode);
+      allow update, delete: if false;
+    }
+
+    match /invites/{inviteId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

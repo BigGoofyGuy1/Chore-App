@@ -7,12 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:924898350932:android:a493b562763adec9b5dac1",
+        "mobilesdk_app_id": "1:924898350932:android:a8877b5694b2828fb5dac1",
         "android_client_info": {
-          "package_name": "com.example.choreapp"
+          "package_name": "com.biggoofyguy.goofytasks"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "924898350932-3i16bffab0rljjgap37pdjbuldjl05fn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBS-Q3VKDCMM0l3PDZGq6jFbJjCBxnwLQs"
@@ -20,7 +25,41 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "924898350932-3i16bffab0rljjgap37pdjbuldjl05fn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:924898350932:android:a493b562763adec9b5dac1",
+        "android_client_info": {
+          "package_name": "com.example.choreapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "924898350932-3i16bffab0rljjgap37pdjbuldjl05fn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBS-Q3VKDCMM0l3PDZGq6jFbJjCBxnwLQs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "924898350932-3i16bffab0rljjgap37pdjbuldjl05fn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

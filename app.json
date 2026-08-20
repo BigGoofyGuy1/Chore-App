@@ -7,16 +7,19 @@
     "icon": "./assets/icon.png",
     "scheme": "choreapp",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#f8fafc"
-    },
     "android": {
-      "package": "com.example.choreapp",
+      "package": "com.biggoofyguy.goofytasks",
       "googleServicesFile": "./google-services.json",
       "permissions": [
-        "READ_MEDIA_IMAGES"
+        "READ_MEDIA_IMAGES",
+        "POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
@@ -32,7 +35,25 @@
       }
     },
     "plugins": [
-      "@react-native-firebase/app"
+      "@react-native-firebase/app",
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Chore App to choose proof photos from this device.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#f8fafc"
+        }
+      ]
     ],
     "owner": "biggoofyguy",
     "runtimeVersion": "1.0.0",
@@ -41,7 +62,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.choreapp"
+      "bundleIdentifier": "com.biggoofyguy.goofytasks"
     }
   }
 }

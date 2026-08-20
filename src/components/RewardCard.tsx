@@ -8,6 +8,8 @@ interface RewardCardProps {
   currentMember?: Profile;
   onClaim?: (reward: Reward) => void;
   onDelete?: (reward: Reward) => void;
+  onPin?: (reward: Reward) => void;
+  isPinned?: boolean;
 }
 
 export const RewardCard: React.FC<RewardCardProps> = ({ 
@@ -15,7 +17,9 @@ export const RewardCard: React.FC<RewardCardProps> = ({
   profile, 
   currentMember, 
   onClaim, 
-  onDelete 
+  onDelete,
+  onPin,
+  isPinned = false,
 }) => {
   return (
     <View style={styles.card}>
@@ -25,13 +29,23 @@ export const RewardCard: React.FC<RewardCardProps> = ({
       </View>
       <View style={[styles.row, { marginTop: 10, gap: 8 }]}>
         {profile.role === 'child' ? (
-          <TouchableOpacity 
-            style={[styles.secondaryBtn, { flex: 1, opacity: (currentMember?.points || 0) >= reward.points ? 1 : 0.5 }]} 
-            disabled={(currentMember?.points || 0) < reward.points} 
-            onPress={() => onClaim?.(reward)}
-          >
-            <Text style={styles.secondaryBtnText}>Claim Reward</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.pinBtn, isPinned && styles.pinBtnActive]}
+              onPress={() => onPin?.(reward)}
+            >
+              <Text style={[styles.pinBtnText, isPinned && styles.pinBtnTextActive]}>{isPinned ? 'Pinned Goal' : 'Pin Goal'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.secondaryBtn, { flex: 1, opacity: (currentMember?.points || 0) >= reward.points ? 1 : 0.5 }]}
+              disabled={(currentMember?.points || 0) < reward.points}
+              onPress={() => onClaim?.(reward)}
+            >
+              <Text style={styles.secondaryBtnText}>Claim Reward</Text>
+            </TouchableOpacity>
+          </>
         ) : (
           <TouchableOpacity 
             style={[styles.secondaryBtn, { flex: 1, backgroundColor: '#FEF2F2' }]} 
@@ -50,4 +64,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   secondaryBtn: { backgroundColor: '#F1F5F9', borderRadius: 12, paddingVertical: 14, alignItems: 'center', width: '100%' },
   secondaryBtnText: { color: '#0F172A', fontWeight: '600' },
+  pinBtn: { flex: 1, backgroundColor: '#FFFBEB', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' },
+  pinBtnActive: { backgroundColor: '#F59E0B', borderColor: '#F59E0B' },
+  pinBtnText: { color: '#B45309', fontWeight: '700' },
+  pinBtnTextActive: { color: '#FFF' },
 });

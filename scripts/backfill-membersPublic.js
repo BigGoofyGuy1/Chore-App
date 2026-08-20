@@ -1,4 +1,5 @@
-const admin = require("firebase-admin");
+const { applicationDefault, initializeApp } = require("firebase-admin/app");
+const { FieldPath, getFirestore } = require("firebase-admin/firestore");
 
 const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 if (!credsPath) {
@@ -6,26 +7,29 @@ if (!credsPath) {
   process.exit(1);
 }
 
-admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
+initializeApp({
+  credential: applicationDefault(),
 });
 
-const db = admin.firestore();
-const { FieldPath } = admin.firestore;
+const db = getFirestore();
 
 async function backfillMembersPublic() {
   const batchLimit = 400;
   let lastDoc = null;
   let total = 0;
 
-  while (true) {
+  let hasMore = true;
+  while (hasMore) {
     let query = db.collection("members").orderBy(FieldPath.documentId()).limit(batchLimit);
     if (lastDoc) {
       query = query.startAfter(lastDoc);
     }
 
     const snap = await query.get();
-    if (snap.empty) break;
+    if (snap.empty) {
+      hasMore = false;
+      break;
+    }
 
     const batch = db.batch();
     snap.docs.forEach((docSnap) => {

@@ -6,6 +6,7 @@ firebaseConfig.ts
 
 # Expo
 .expo/
+/android/
 *.jks
 *.p8
 *.p12
@@ -14,9 +15,16 @@ firebaseConfig.ts
 dist/
 .idea/
 android/app/debug.keystore
+android/app/build/
+android/build/
+*.apk
+*.aab
 
 # Misc
+.codex-tmp/
+firestore-debug.log
 .DS_Store
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*firebase-adminsdk*.json

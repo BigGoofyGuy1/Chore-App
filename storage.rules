@@ -6,14 +6,89 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    match /choreProofs/{familyCode}/{fileName} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() &&
-                   request.resource.size < 10 * 1024 * 1024 && // Max 10MB
-                   request.resource.contentType.matches('image/.*'); // Any image type
+    function memberRef(uid) {
+      return /databases/(default)/documents/members/$(uid);
     }
 
-    // Default deny
+    function choreRef(choreId) {
+      return /databases/(default)/documents/chores/$(choreId);
+    }
+
+    function isFamilyMember(familyCode) {
+      return isSignedIn() &&
+        firestore.exists(memberRef(request.auth.uid)) &&
+        firestore.get(memberRef(request.auth.uid)).data.familyCode == familyCode;
+    }
+
+    function isParentInFamily(familyCode) {
+      return isFamilyMember(familyCode) &&
+        firestore.get(memberRef(request.auth.uid)).data.role == "parent";
+    }
+
+    function choreBelongsToFamily(familyCode, choreId) {
+      return firestore.exists(choreRef(choreId)) &&
+        firestore.get(choreRef(choreId)).data.familyCode == familyCode;
+    }
+
+    function isAssignedChore(choreId) {
+      return firestore.get(choreRef(choreId)).data.assignedToUid == request.auth.uid;
+    }
+
+    function isLegacyAssignedChore(choreId) {
+      return firestore.get(choreRef(choreId)).data.assignedToUid == null &&
+        firestore.get(choreRef(choreId)).data.assignedTo ==
+          firestore.get(memberRef(request.auth.uid)).data.displayName;
+    }
+
+    function isUnclaimedBounty(choreId) {
+      return firestore.get(choreRef(choreId)).data.isBounty == true &&
+        firestore.get(choreRef(choreId)).data.assignedToUid == null;
+    }
+
+    function canSubmitProof(familyCode, choreId) {
+      return isFamilyMember(familyCode) &&
+        choreBelongsToFamily(familyCode, choreId) &&
+        (
+          isAssignedChore(choreId) ||
+          isLegacyAssignedChore(choreId) ||
+          isUnclaimedBounty(choreId)
+        );
+    }
+
+    function isProofUploader() {
+      return resource.metadata.keys().hasAll(["uploaderUid"]) &&
+        resource.metadata.uploaderUid == request.auth.uid;
+    }
+
+    function canReadProof(familyCode, choreId) {
+      return isFamilyMember(familyCode) &&
+        choreBelongsToFamily(familyCode, choreId) &&
+        (
+          isParentInFamily(familyCode) ||
+          isAssignedChore(choreId) ||
+          isLegacyAssignedChore(choreId) ||
+          isProofUploader()
+        );
+    }
+
+    match /choreProofs/{familyCode}/{choreId}/{fileName} {
+      allow read: if canReadProof(familyCode, choreId);
+      allow create: if canSubmitProof(familyCode, choreId) &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*') &&
+        request.resource.metadata.keys().hasAll(["choreId", "uploaderUid"]) &&
+        request.resource.metadata.choreId == choreId &&
+        request.resource.metadata.uploaderUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Old flat proof paths remain visible to parents only. Existing download
+    // URLs continue to work, while children can no longer list sibling files.
+    match /choreProofs/{familyCode}/{fileName} {
+      allow read: if isParentInFamily(familyCode);
+      allow write: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

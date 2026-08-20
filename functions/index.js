@@ -1,19 +1,261 @@
-const admin = require("firebase-admin");
-const functions = require("firebase-functions");
-const { FieldValue, Timestamp } = require("firebase-admin/firestore");
+const functions = require("firebase-functions/v1");
+const { initializeApp } = require("firebase-admin/app");
+const { FieldValue, Timestamp, getFirestore } = require("firebase-admin/firestore");
 const crypto = require("crypto");
 
-admin.initializeApp();
+initializeApp();
 
-const db = admin.firestore();
-const publicCallable = functions.runWith({ invoker: "public" });
+const db = getFirestore();
+const publicHttps = functions.runWith({ invoker: "public" });
+
+// firebase-functions v1 does not serialize an `invoker` option for callable
+// triggers. Wrap the callable protocol in a public HTTPS trigger so Firebase
+// deploys the required allUsers invoker binding while auth is still verified
+// by the callable handler below.
+function publicOnCall(handler) {
+  const callable = functions.https.onCall(handler);
+  return publicHttps.https.onRequest((request, response) => callable(request, response));
+}
 
 const INVITE_TTL_HOURS_DEFAULT = 168; // 7 days
 const INVITE_USES_DEFAULT = 1;
 const DEFAULT_TIMEZONE = "America/Chicago";
+const TEMPLATE_LOOKAHEAD_HOURS = 30;
+
+function normalizeSteps(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps.map((s) => {
+    const text = String(s);
+    return text.startsWith("✓ ") ? text.slice(2) : text;
+  });
+}
+
+function getTimeZoneParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  };
+}
+
+function zonedDateTimeToDate(year, month, day, hour, minute, timeZone) {
+  const desiredUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let guess = desiredUtc;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = getTimeZoneParts(new Date(guess), timeZone);
+    const representedUtc = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      0,
+      0
+    );
+    guess -= representedUtc - desiredUtc;
+  }
+
+  return new Date(guess);
+}
+
+function nextTemplateDueAt(schedule, afterDate) {
+  const weekdays = new Set(Array.isArray(schedule?.weekdays) ? schedule.weekdays : []);
+  if (!weekdays.size) return null;
+
+  const timeZone = schedule.timezone || DEFAULT_TIMEZONE;
+  const localParts = getTimeZoneParts(afterDate, timeZone);
+  const localDay = new Date(Date.UTC(localParts.year, localParts.month - 1, localParts.day));
+
+  for (let offset = 0; offset < 14; offset += 1) {
+    const candidateDay = new Date(localDay.getTime());
+    candidateDay.setUTCDate(candidateDay.getUTCDate() + offset);
+    if (!weekdays.has(candidateDay.getUTCDay())) continue;
+    const candidate = zonedDateTimeToDate(
+      candidateDay.getUTCFullYear(),
+      candidateDay.getUTCMonth() + 1,
+      candidateDay.getUTCDate(),
+      Number(schedule.hour) || 0,
+      Number(schedule.minute) || 0,
+      timeZone
+    );
+    if (candidate.getTime() > afterDate.getTime()) return candidate;
+  }
+
+  return null;
+}
+
+function templateDateKey(date, timeZone) {
+  const parts = getTimeZoneParts(date, timeZone || DEFAULT_TIMEZONE);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+async function materializeActiveChoreTemplates() {
+  const templatesSnap = await db.collection("choreTemplates").where("active", "==", true).get();
+  if (templatesSnap.empty) return null;
+
+  const now = new Date();
+  const horizon = new Date(now.getTime() + TEMPLATE_LOOKAHEAD_HOURS * 60 * 60 * 1000);
+
+  for (const templateSnap of templatesSnap.docs) {
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(templateSnap.ref);
+      if (!freshSnap.exists) return;
+      const template = freshSnap.data();
+      if (template.active !== true) return;
+
+      let dueAt = template.nextDueAt?.toDate ? template.nextDueAt.toDate() : null;
+      if (!dueAt) {
+        dueAt = nextTemplateDueAt(template.schedule, new Date(now.getTime() - 60 * 1000));
+      }
+      let generated = 0;
+
+      while (dueAt && dueAt.getTime() <= horizon.getTime() && generated < 14) {
+        const scheduledDate = templateDateKey(dueAt, template.schedule?.timezone);
+        const occurrenceRef = db.collection("chores").doc(`${freshSnap.id}_${scheduledDate}`);
+        tx.create(occurrenceRef, {
+          title: template.title || "",
+          description: template.description || "",
+          points: Number(template.points) || 0,
+          assignedTo: template.assignedTo || "",
+          assignedToUid: template.assignedToUid || null,
+          familyCode: template.familyCode,
+          status: "pending",
+          createdAt: FieldValue.serverTimestamp(),
+          repeat: "none",
+          dueAt: Timestamp.fromDate(dueAt),
+          steps: normalizeSteps(template.steps),
+          photoUrls: [],
+          completedBy: null,
+          completedByUid: null,
+          completedAt: null,
+          feedback: null,
+          archived: false,
+          archivedAt: null,
+          isBounty: template.isBounty === true,
+          required: template.required !== false,
+          templateId: freshSnap.id,
+          scheduledDate,
+        });
+        dueAt = nextTemplateDueAt(template.schedule, dueAt);
+        generated += 1;
+      }
+
+      if (dueAt) {
+        tx.update(freshSnap.ref, {
+          nextDueAt: Timestamp.fromDate(dueAt),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  return null;
+}
+
+async function rollRepeatingChores(repeat, computeNextDueAt) {
+  const snap = await db
+    .collection("chores")
+    .where("status", "==", "approved")
+    .where("repeat", "==", repeat)
+    .where("archivedAt", "==", null)
+    .get();
+
+  if (snap.empty) return null;
+
+  const docs = snap.docs;
+  const chunkSize = 200; // 2 writes per chore => 400 ops per batch
+  const now = FieldValue.serverTimestamp();
+
+  for (let i = 0; i < docs.length; i += chunkSize) {
+    const batch = db.batch();
+    const slice = docs.slice(i, i + chunkSize);
+
+    slice.forEach((docSnap) => {
+      const data = docSnap.data();
+      const dueAt = data?.dueAt?.toDate ? data.dueAt.toDate() : null;
+      const nextDueAt = computeNextDueAt(dueAt);
+
+      const newRef = db.collection("chores").doc();
+      batch.set(newRef, {
+        title: data.title || "",
+        description: data.description || "",
+        points: Number(data.points) || 0,
+        assignedTo: data.assignedTo || "",
+        assignedToUid: data.assignedToUid || null,
+        familyCode: data.familyCode,
+        status: "pending",
+        createdAt: now,
+        repeat: data.repeat || repeat,
+        dueAt: nextDueAt,
+        steps: normalizeSteps(data.steps),
+        photoUrls: [],
+        completedBy: null,
+        completedAt: null,
+        feedback: null,
+        archived: false,
+        archivedAt: null,
+        sourceChoreId: docSnap.id,
+        isBounty: data.isBounty === true,
+        required: data.required !== false && data.isBounty !== true,
+      });
+
+      batch.update(docSnap.ref, { archivedAt: now, archived: true });
+    });
+
+    await batch.commit();
+  }
+
+  return null;
+}
 
 function normalizeName(name) {
   return String(name || "").trim();
+}
+
+function normalizeDisplayName(name) {
+  const displayName = normalizeName(name);
+  if (!displayName || displayName.length > 80) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "displayName must be between 1 and 80 characters."
+    );
+  }
+  return displayName;
+}
+
+function normalizePushToken(value) {
+  const pushToken = normalizeName(value);
+  if (!pushToken) return null;
+  if (
+    pushToken.length > 256 ||
+    !/^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/.test(pushToken)
+  ) {
+    throw new functions.https.HttpsError("invalid-argument", "Invalid Expo push token.");
+  }
+  return pushToken;
+}
+
+function hasVerifiedEmail(context) {
+  return context.auth?.token?.email_verified === true && Boolean(context.auth.token.email);
+}
+
+function requireVerifiedEmail(context, message = "A verified email account is required.") {
+  if (!hasVerifiedEmail(context)) {
+    throw new functions.https.HttpsError("permission-denied", message);
+  }
 }
 
 function generateCode(length = 8) {
@@ -31,15 +273,15 @@ async function getMember(uid) {
   return snap.exists ? snap.data() : null;
 }
 
-exports.createFamily = publicCallable.https.onCall(async (data, context) => {
+const createFamilyHandler = async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
   }
 
-  const displayName = normalizeName(data?.displayName);
-  if (!displayName) {
-    throw new functions.https.HttpsError("invalid-argument", "displayName is required.");
-  }
+  requireVerifiedEmail(context, "A verified parent email is required to create a family.");
+
+  const displayName = normalizeDisplayName(data?.displayName);
+  const pushToken = normalizePushToken(data?.pushToken);
 
   const uid = context.auth.uid;
 
@@ -74,9 +316,13 @@ exports.createFamily = publicCallable.https.onCall(async (data, context) => {
           familyCode: candidate,
           role: "parent",
           points: 0,
-          pushToken: data?.pushToken || null,
         };
         tx.set(db.collection("members").doc(uid), memberData);
+        tx.set(db.collection("memberPrivate").doc(uid), {
+          familyCode: candidate,
+          pushToken,
+          updatedAt: now,
+        });
         tx.set(db.collection("membersPublic").doc(uid), {
           displayName,
           role: "parent",
@@ -99,9 +345,12 @@ exports.createFamily = publicCallable.https.onCall(async (data, context) => {
   }
 
   return { familyCode };
-});
+};
 
-exports.createInvite = publicCallable.https.onCall(async (data, context) => {
+exports.createFamily = functions.https.onCall(createFamilyHandler);
+exports.createFamilyApi = publicOnCall(createFamilyHandler);
+
+const createInviteHandler = async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
   }
@@ -110,6 +359,7 @@ exports.createInvite = publicCallable.https.onCall(async (data, context) => {
   if (!member || member.role !== "parent") {
     throw new functions.https.HttpsError("permission-denied", "Parent access required.");
   }
+  requireVerifiedEmail(context, "A verified parent email is required to create invites.");
 
   const role = data?.role === "parent" ? "parent" : "child";
   const ttlHours = Number.isFinite(data?.ttlHours) ? data.ttlHours : INVITE_TTL_HOURS_DEFAULT;
@@ -159,18 +409,22 @@ exports.createInvite = publicCallable.https.onCall(async (data, context) => {
   }
 
   return { code: inviteCode };
-});
+};
 
-exports.joinWithInvite = publicCallable.https.onCall(async (data, context) => {
+exports.createInvite = functions.https.onCall(createInviteHandler);
+exports.createInviteApi = publicOnCall(createInviteHandler);
+
+const joinWithInviteHandler = async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
   }
 
-  const displayName = normalizeName(data?.displayName);
+  const displayName = normalizeDisplayName(data?.displayName);
   const code = normalizeName(data?.code).toUpperCase();
-  if (!displayName || !code) {
-    throw new functions.https.HttpsError("invalid-argument", "displayName and code are required.");
+  if (!code) {
+    throw new functions.https.HttpsError("invalid-argument", "code is required.");
   }
+  const pushToken = normalizePushToken(data?.pushToken);
 
   const uid = context.auth.uid;
   const existingMember = await getMember(uid);
@@ -193,6 +447,12 @@ exports.joinWithInvite = publicCallable.https.onCall(async (data, context) => {
     if (invite.expiresAt && invite.expiresAt.toMillis() < Date.now()) {
       throw new functions.https.HttpsError("failed-precondition", "Invite expired.");
     }
+    if (invite.role === "parent" && !hasVerifiedEmail(context)) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Parent invites require a verified email account."
+      );
+    }
 
     const memberData = {
       uid,
@@ -200,10 +460,14 @@ exports.joinWithInvite = publicCallable.https.onCall(async (data, context) => {
       familyCode: invite.familyCode,
       role: invite.role,
       points: 0,
-      pushToken: data?.pushToken || null,
     };
 
     tx.set(db.collection("members").doc(uid), memberData);
+    tx.set(db.collection("memberPrivate").doc(uid), {
+      familyCode: invite.familyCode,
+      pushToken,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
     tx.set(db.collection("membersPublic").doc(uid), {
       displayName,
       role: invite.role,
@@ -220,78 +484,173 @@ exports.joinWithInvite = publicCallable.https.onCall(async (data, context) => {
   });
 
   return result;
-});
+};
+
+exports.joinWithInvite = functions.https.onCall(joinWithInviteHandler);
+exports.joinWithInviteApi = publicOnCall(joinWithInviteHandler);
+
+const migrateFamilyPrivateDataHandler = async (_data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const member = await getMember(context.auth.uid);
+  if (!member || member.role !== "parent") {
+    throw new functions.https.HttpsError("permission-denied", "Parent access required.");
+  }
+
+  const membersSnap = await db
+    .collection("members")
+    .where("familyCode", "==", member.familyCode)
+    .get();
+
+  let migrated = 0;
+  const candidates = membersSnap.docs.filter((docSnap) => Boolean(docSnap.data()?.pushToken));
+  const chunkSize = 200;
+
+  for (let i = 0; i < candidates.length; i += chunkSize) {
+    const batch = db.batch();
+    const slice = candidates.slice(i, i + chunkSize);
+
+    slice.forEach((docSnap) => {
+      const memberData = docSnap.data();
+      batch.set(
+        db.collection("memberPrivate").doc(docSnap.id),
+        {
+          familyCode: member.familyCode,
+          pushToken: memberData.pushToken,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      batch.update(docSnap.ref, { pushToken: FieldValue.delete() });
+      migrated += 1;
+    });
+
+    await batch.commit();
+  }
+
+  return { migrated };
+};
+
+exports.migrateFamilyPrivateData = functions.https.onCall(migrateFamilyPrivateDataHandler);
+exports.migrateFamilyPrivateDataApi = publicOnCall(migrateFamilyPrivateDataHandler);
+
+async function sendExpoPushNotifications(tokens, title, body) {
+  const messages = Array.from(new Set(tokens))
+    .filter((token) => typeof token === "string")
+    .filter((token) => /^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/.test(token))
+    .map((to) => ({ to, sound: "default", title, body }));
+
+  if (!messages.length) return 0;
+
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messages),
+  });
+
+  if (!response.ok) {
+    throw new functions.https.HttpsError("unavailable", "Push notification service unavailable.");
+  }
+
+  return messages.length;
+}
+
+const notifyChoreSubmittedHandler = async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const choreId = String(data?.choreId ?? "").trim();
+  if (!choreId || choreId.length > 128) {
+    throw new functions.https.HttpsError("invalid-argument", "A valid choreId is required.");
+  }
+
+  const [member, choreSnap] = await Promise.all([
+    getMember(context.auth.uid),
+    db.collection("chores").doc(choreId).get(),
+  ]);
+  if (!member || !choreSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Member or chore not found.");
+  }
+
+  const chore = choreSnap.data();
+  if (
+    chore.familyCode !== member.familyCode ||
+    chore.status !== "submitted" ||
+    chore.completedByUid !== context.auth.uid
+  ) {
+    throw new functions.https.HttpsError("permission-denied", "Only the submitter can send this notification.");
+  }
+
+  const parentsSnap = await db
+    .collection("members")
+    .where("familyCode", "==", member.familyCode)
+    .where("role", "==", "parent")
+    .get();
+  const privateRefs = parentsSnap.docs.map((parentDoc) =>
+    db.collection("memberPrivate").doc(parentDoc.id)
+  );
+  const privateDocs = privateRefs.length ? await db.getAll(...privateRefs) : [];
+  const tokens = privateDocs.map((privateDoc) => privateDoc.data()?.pushToken);
+  const sent = await sendExpoPushNotifications(
+    tokens,
+    "Chore Submitted! 📸",
+    `${member.displayName} finished ${chore.title}. Review it now!`
+  );
+
+  return { sent };
+};
+
+exports.notifyChoreSubmitted = functions.https.onCall(notifyChoreSubmittedHandler);
+exports.notifyChoreSubmittedApi = publicOnCall(notifyChoreSubmittedHandler);
 
 exports.rollDailyChores = functions.pubsub
   .schedule("0 0 * * *")
   .timeZone(DEFAULT_TIMEZONE)
   .onRun(async () => {
-    const snap = await db.collection("chores")
-      .where("status", "==", "approved")
-      .where("repeat", "==", "daily")
-      .where("archivedAt", "==", null)
-      .get();
-
-    if (snap.empty) return null;
-
-    const docs = snap.docs;
-    const chunkSize = 200; // 2 writes per chore => 400 ops per batch
-    const now = FieldValue.serverTimestamp();
-
-    const normalizeSteps = (steps) => {
-      if (!Array.isArray(steps)) return [];
-      return steps.map((s) => {
-        const text = String(s);
-        return text.startsWith("✓ ") ? text.slice(2) : text;
-      });
-    };
-
-    for (let i = 0; i < docs.length; i += chunkSize) {
-      const batch = db.batch();
-      const slice = docs.slice(i, i + chunkSize);
-
-      slice.forEach((docSnap) => {
-        const data = docSnap.data();
-        const dueAt = data?.dueAt?.toDate ? data.dueAt.toDate() : null;
-        let nextDueAt = null;
-        if (dueAt instanceof Date && !Number.isNaN(dueAt.getTime())) {
-          const next = new Date(dueAt.getTime());
-          next.setDate(next.getDate() + 1);
-          nextDueAt = Timestamp.fromDate(next);
-        }
-
-        const newRef = db.collection("chores").doc();
-        batch.set(newRef, {
-          title: data.title || "",
-          description: data.description || "",
-          points: Number(data.points) || 0,
-          assignedTo: data.assignedTo || "",
-          assignedToUid: data.assignedToUid || null,
-          familyCode: data.familyCode,
-          status: "pending",
-          createdAt: now,
-          repeat: data.repeat || "daily",
-          dueAt: nextDueAt,
-          steps: normalizeSteps(data.steps),
-          photoUrls: [],
-          completedBy: null,
-          completedAt: null,
-          feedback: null,
-          archived: false,
-          archivedAt: null,
-          sourceChoreId: docSnap.id,
-        });
-
-        batch.update(docSnap.ref, { archivedAt: now, archived: true });
-      });
-
-      await batch.commit();
-    }
-
-    return null;
+    return rollRepeatingChores("daily", (dueAt) => {
+      if (!(dueAt instanceof Date) || Number.isNaN(dueAt.getTime())) return null;
+      const next = new Date(dueAt.getTime());
+      next.setDate(next.getDate() + 1);
+      return Timestamp.fromDate(next);
+    });
   });
 
-exports.backfillApprovalLogs = publicCallable.https.onCall(async (data, context) => {
+exports.rollWeeklyChores = functions.pubsub
+  .schedule("0 0 * * 0")
+  .timeZone(DEFAULT_TIMEZONE)
+  .onRun(async () => {
+    return rollRepeatingChores("weekly", (dueAt) => {
+      if (!(dueAt instanceof Date) || Number.isNaN(dueAt.getTime())) return null;
+      const next = new Date(dueAt.getTime());
+      next.setDate(next.getDate() + 7);
+      return Timestamp.fromDate(next);
+    });
+  });
+
+exports.rollMonthlyChores = functions.pubsub
+  .schedule("0 0 1 * *")
+  .timeZone(DEFAULT_TIMEZONE)
+  .onRun(async () => {
+    return rollRepeatingChores("monthly", (dueAt) => {
+      if (!(dueAt instanceof Date) || Number.isNaN(dueAt.getTime())) return null;
+      const next = new Date(dueAt.getTime());
+      next.setMonth(next.getMonth() + 1);
+      return Timestamp.fromDate(next);
+    });
+  });
+
+exports.materializeChoreTemplates = functions.pubsub
+  .schedule("every 30 minutes")
+  .timeZone(DEFAULT_TIMEZONE)
+  .onRun(async () => materializeActiveChoreTemplates());
+
+exports.backfillApprovalLogs = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
   }

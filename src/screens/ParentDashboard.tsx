@@ -1,152 +1,278 @@
-import React, { useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Chore, Profile, RepeatInterval } from '../types';
-import { ChoreCard } from '../components/ChoreCard';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Chore, Profile } from '../types';
 import { namesMatch } from '../utils/nameMatch';
+import { toDate } from '../utils/date';
 
 interface ParentDashboardProps {
   profile: Profile;
   chores: Chore[];
   familyMembers: Profile[];
   onPressChore: (chore: Chore) => void;
+  onApprove: (chore: Chore) => Promise<void>;
+  decidingChoreId?: string | null;
 }
 
-const GET_FAMILY_STATUS_COLOR = (status: string) => {
-  switch (status) {
-    case 'approved': return '#10B981';
-    case 'submitted':
-    case 'in_progress': return '#F59E0B';
-    default: return '#EF4444';
-  }
+const STATUS_CONFIG: Record<string, { color: string; label: string; order: number }> = {
+  submitted: { color: '#2563EB', label: 'Awaiting review', order: 0 },
+  redo: { color: '#EF4444', label: 'Needs redo', order: 1 },
+  in_progress: { color: '#F59E0B', label: 'In progress', order: 2 },
+  pending: { color: '#64748B', label: 'Not started', order: 3 },
+  approved: { color: '#10B981', label: 'Approved', order: 4 },
 };
 
-const STATUS_GROUP = (status: string) => {
-  switch (status) {
-    case 'submitted': return 1; // Awaiting Approval
-    case 'approved': return 2;
-    case 'pending':
-    case 'in_progress':
-    case 'redo':
-    default:
-      return 0; // Pending Chores
-  }
+const dueAtMs = (chore: Chore) => toDate(chore.dueAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+
+const formatDue = (chore: Chore) => {
+  const dueAt = toDate(chore.dueAt);
+  if (!dueAt) return 'No deadline';
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const sameDay = (left: Date, right: Date) =>
+    left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate();
+  if (dueAt.getTime() < now.getTime() && !sameDay(dueAt, now)) return `Overdue · ${dueAt.toLocaleDateString()}`;
+  if (sameDay(dueAt, now)) return `Today · ${dueAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  if (sameDay(dueAt, tomorrow)) return `Tomorrow · ${dueAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return dueAt.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
-export const ParentDashboard: React.FC<ParentDashboardProps> = ({ 
-  profile, 
-  chores, 
-  familyMembers, 
-  onPressChore 
+const sortChores = (left: Chore, right: Chore) => {
+  const statusDifference = (STATUS_CONFIG[left.status]?.order ?? 9) - (STATUS_CONFIG[right.status]?.order ?? 9);
+  if (statusDifference) return statusDifference;
+  const dueDifference = dueAtMs(left) - dueAtMs(right);
+  if (dueDifference) return dueDifference;
+  return left.title.localeCompare(right.title, 'en');
+};
+
+export const ParentDashboard: React.FC<ParentDashboardProps> = ({
+  profile,
+  chores,
+  familyMembers,
+  onPressChore,
+  onApprove,
+  decidingChoreId,
 }) => {
-  const [filter, setFilter] = useState<RepeatInterval | "all">("all");
-  const [bountiesOpen, setBountiesOpen] = useState(true);
+  const [nowMs, setNowMs] = useState(0);
 
-  const filteredChores = filter === "all" ? chores : chores.filter(c => (c.repeat || 'none') === filter);
-  const bounties = filteredChores
-    .filter(c => c.isBounty)
-    .filter(c => !c.assignedToUid)
-    .filter(c => c.status !== 'approved' && c.status !== 'submitted')
-    .sort((a, b) => {
-      const groupDiff = STATUS_GROUP(a.status) - STATUS_GROUP(b.status);
-      if (groupDiff !== 0) return groupDiff;
-      const aTitle = (a.title || "").toLowerCase();
-      const bTitle = (b.title || "").toLowerCase();
-      return aTitle.localeCompare(bTitle, "en");
-    });
-  
-  const activeMembers = familyMembers.filter(member => 
-    filteredChores.some(chore => namesMatch(chore.assignedTo, member.displayName))
+  useEffect(() => {
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const submitted = useMemo(
+    () => chores.filter((chore) => chore.status === 'submitted').sort(sortChores),
+    [chores]
   );
+  const myChores = useMemo(
+    () => chores
+      .filter((chore) => chore.status !== 'approved')
+      .filter((chore) => chore.assignedToUid
+        ? chore.assignedToUid === profile.uid
+        : namesMatch(chore.assignedTo, profile.displayName))
+      .sort(sortChores),
+    [chores, profile.displayName, profile.uid]
+  );
+  const bounties = useMemo(
+    () => chores
+      .filter((chore) => chore.isBounty && !chore.assignedToUid && !['approved', 'submitted'].includes(chore.status))
+      .sort(sortChores),
+    [chores]
+  );
+  const childSections = useMemo(
+    () => familyMembers
+      .filter((member) => member.role === 'child')
+      .map((member) => ({
+        member,
+        chores: chores
+          .filter((chore) => !chore.isBounty)
+          .filter((chore) => chore.assignedToUid ? chore.assignedToUid === member.uid : namesMatch(chore.assignedTo, member.displayName))
+          .sort(sortChores),
+      }))
+      .filter((section) => section.chores.length),
+    [chores, familyMembers]
+  );
+  const openChores = chores.filter((chore) => !['approved', 'submitted'].includes(chore.status));
+  const overdueCount = openChores.filter((chore) => nowMs > 0 && dueAtMs(chore) < nowMs).length;
 
   return (
-    <View style={[styles.container, { paddingTop: 60 }]}>
-      <View style={styles.filterRow}>
-        {(['all', 'daily', 'weekly', 'monthly'] as const).map(f => (
-          <TouchableOpacity 
-            key={f} 
-            style={[styles.filterBtn, filter === f && styles.filterBtnActive]} 
-            onPress={() => setFilter(f)}
-          >
-            <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <FlatList 
-        ListHeaderComponent={
-          <>
-            <View style={styles.bountySection}>
-              <TouchableOpacity style={styles.bountyHeader} onPress={() => setBountiesOpen(v => !v)}>
-                <Text style={styles.bountyTitle}>Bounties</Text>
-                <Text style={styles.bountyToggle}>{bountiesOpen ? "Hide" : "Show"}</Text>
-              </TouchableOpacity>
-              {bountiesOpen ? (
-                bounties.length ? (
-                  bounties.map(item => (
-                    <ChoreCard key={item.id} chore={item} onPress={() => onPressChore(item)} />
-                  ))
-                ) : (
-                  <Text style={styles.emptyText}>No bounties right now.</Text>
-                )
-              ) : null}
-            </View>
-            <Text style={styles.title}>Family Progress</Text>
-          </>
-        }
-        data={activeMembers}
-        keyExtractor={item => item.uid}
-        renderItem={({ item: member }) => {
-          const memberChores = filteredChores
-            .filter(c => namesMatch(c.assignedTo, member.displayName))
-            .sort((a, b) => {
-              const groupDiff = STATUS_GROUP(a.status) - STATUS_GROUP(b.status);
-              if (groupDiff !== 0) return groupDiff;
-              const aTitle = (a.title || "").toLowerCase();
-              const bTitle = (b.title || "").toLowerCase();
-              return aTitle.localeCompare(bTitle, "en");
-            });
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Parent Review</Text>
+
+      <View style={[styles.section, styles.myChoresSection]}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>My Chores</Text>
+          <View style={styles.countPill}>
+            <Text style={styles.countPillText}>{myChores.length}</Text>
+          </View>
+        </View>
+        <Text style={styles.sectionHelper}>Tap a chore to check its steps, attach proof, and submit it.</Text>
+        {myChores.length ? myChores.map((chore) => {
+          const status = STATUS_CONFIG[chore.status] || STATUS_CONFIG.pending;
           return (
-            <View key={member.uid} style={styles.familySection}>
-              <View style={styles.familySectionHeader}>
-                <Text style={styles.childName}>{member.displayName} ({member.role})</Text>
-                <Text style={styles.choreCount}>{memberChores.length} tasks</Text>
+            <TouchableOpacity
+              key={chore.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${chore.title}, ${status.label}`}
+              style={styles.choreRow}
+              onPress={() => onPressChore(chore)}
+            >
+              <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+              <View style={styles.choreCopy}>
+                <Text style={styles.rowTitle}>{chore.title}</Text>
+                <Text style={styles.rowMeta}>{formatDue(chore)} · {chore.points} pts</Text>
               </View>
-              {memberChores.map(chore => (
-                <TouchableOpacity key={chore.id} style={styles.miniChoreRow} onPress={() => onPressChore(chore)}>
-                  <View style={[styles.statusIndicator, { backgroundColor: GET_FAMILY_STATUS_COLOR(chore.status) }]} />
-                  <View style={{ flex: 1 }}><Text style={styles.miniChoreTitle}>{chore.title}</Text></View>
-                  <Text style={styles.miniChoreStatus}>{chore.status.replace('_', ' ')}</Text>
+              <Text style={[styles.rowStatus, { color: status.color }]}>{status.label}</Text>
+            </TouchableOpacity>
+          );
+        }) : <Text style={styles.emptyText}>You have no assigned chores right now.</Text>}
+      </View>
+
+      <View style={styles.summaryRow}>
+        <View style={[styles.summaryCard, styles.summarySpacer]}>
+          <Text style={styles.summaryValue}>{submitted.length}</Text>
+          <Text style={styles.summaryLabel}>Ready to approve</Text>
+        </View>
+        <View style={styles.summaryCard}>
+          <Text style={[styles.summaryValue, overdueCount > 0 && styles.overdueValue]}>{overdueCount}</Text>
+          <Text style={styles.summaryLabel}>Overdue</Text>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Awaiting Approval</Text>
+        <Text style={styles.sectionHelper}>Approve in one tap, or open the chore to review proof and send specific redo feedback.</Text>
+        {submitted.length ? submitted.map((chore) => {
+          const busy = decidingChoreId === chore.id;
+          return (
+            <View key={chore.id} style={styles.reviewCard}>
+              <View style={styles.reviewHeader}>
+                <View style={styles.reviewCopy}>
+                  <Text style={styles.choreTitle}>{chore.title}</Text>
+                  <Text style={styles.choreMeta}>{chore.completedBy || chore.assignedTo} · {chore.points} pts · {formatDue(chore)}</Text>
+                </View>
+                <View style={styles.submittedPill}>
+                  <Text style={styles.submittedPillText}>Ready</Text>
+                </View>
+              </View>
+              <View style={styles.reviewActions}>
+                <TouchableOpacity accessibilityRole="button" style={styles.reviewButton} onPress={() => onPressChore(chore)}>
+                  <Text style={styles.reviewButtonText}>Review / Redo</Text>
                 </TouchableOpacity>
-              ))}
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={[styles.approveButton, busy && styles.disabledButton]}
+                  disabled={busy}
+                  onPress={() => onApprove(chore)}
+                >
+                  {busy ? <ActivityIndicator color="#FFF" size="small" /> : <Text style={styles.approveButtonText}>Approve +{chore.points}</Text>}
+                </TouchableOpacity>
+              </View>
             </View>
           );
-        }}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      />
-    </View>
+        }) : <Text style={styles.emptyText}>Nothing is waiting for review.</Text>}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Required Chores</Text>
+        {childSections.length ? childSections.map(({ member, chores: memberChores }) => (
+          <View key={member.uid} style={styles.childSection}>
+            <View style={styles.childHeader}>
+              <View>
+                <Text style={styles.childName}>{member.displayName}</Text>
+                <Text style={styles.childConsistency}>
+                  {member.weeklyConsistency?.completedDays?.length || 0}/{member.weeklyConsistency?.goalDays || 5} consistency days
+                </Text>
+              </View>
+              <Text style={styles.choreCount}>{memberChores.length} chores</Text>
+            </View>
+            {memberChores.map((chore) => {
+              const status = STATUS_CONFIG[chore.status] || STATUS_CONFIG.pending;
+              return (
+                <TouchableOpacity
+                  key={chore.id}
+                  accessibilityRole="button"
+                  style={styles.choreRow}
+                  onPress={() => onPressChore(chore)}
+                >
+                  <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+                  <View style={styles.choreCopy}>
+                    <Text style={styles.rowTitle}>{chore.title}</Text>
+                    <Text style={styles.rowMeta}>{formatDue(chore)}</Text>
+                  </View>
+                  <Text style={[styles.rowStatus, { color: status.color }]}>{status.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )) : <Text style={styles.emptyText}>No required chores assigned yet.</Text>}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Optional Bounties</Text>
+        {bounties.length ? bounties.map((chore) => (
+          <TouchableOpacity
+            key={chore.id}
+            accessibilityRole="button"
+            style={styles.choreRow}
+            onPress={() => onPressChore(chore)}
+          >
+            <View style={[styles.statusDot, styles.bountyDot]} />
+            <View style={styles.choreCopy}>
+              <Text style={styles.rowTitle}>{chore.title}</Text>
+              <Text style={styles.rowMeta}>{formatDue(chore)}</Text>
+            </View>
+            <Text style={styles.bountyPoints}>+{chore.points} pts</Text>
+          </TouchableOpacity>
+        )) : <Text style={styles.emptyText}>No optional bounties right now.</Text>}
+      </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  content: { paddingHorizontal: 20, paddingTop: 40, paddingBottom: 120 },
   title: { fontSize: 24, fontWeight: '700', color: '#0F172A' },
-  filterRow: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 12, padding: 4, marginBottom: 16 },
-  filterBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
-  filterBtnActive: { backgroundColor: '#FFF' },
-  filterText: { fontSize: 12, fontWeight: '600', color: '#64748B' },
-  filterTextActive: { color: '#0F172A' },
-  emptyText: { fontStyle: 'italic', color: '#94A3B8', textAlign: 'center' },
-  bountySection: { marginBottom: 10 },
-  bountyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  bountyTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
-  bountyToggle: { fontSize: 12, fontWeight: '600', color: '#2563EB' },
-  familySection: { marginBottom: 20 },
-  familySectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  childName: { fontSize: 16, fontWeight: '600' },
-  choreCount: { fontSize: 12, color: '#64748B' },
-  miniChoreRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#F1F5F9' },
-  statusIndicator: { width: 10, height: 10, borderRadius: 5, marginRight: 12, marginTop: 5 },
-  miniChoreTitle: { fontSize: 15, color: '#334155' },
-  miniChoreStatus: { fontSize: 12, color: '#94A3B8', textTransform: 'capitalize' },
+  myChoresSection: { borderColor: '#BFDBFE', backgroundColor: '#EFF6FF' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  countPill: { minWidth: 28, height: 28, borderRadius: 14, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#2563EB' },
+  countPillText: { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  summaryRow: { flexDirection: 'row', marginTop: 18 },
+  summaryCard: { flex: 1, backgroundColor: '#FFF', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#E2E8F0' },
+  summarySpacer: { marginRight: 12 },
+  summaryValue: { fontSize: 28, fontWeight: '800', color: '#2563EB' },
+  overdueValue: { color: '#EF4444' },
+  summaryLabel: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  section: { backgroundColor: '#FFF', borderRadius: 16, padding: 18, marginTop: 18, borderWidth: 1, borderColor: '#E2E8F0' },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#0F172A' },
+  sectionHelper: { color: '#64748B', fontSize: 13, lineHeight: 18, marginTop: 5, marginBottom: 8 },
+  reviewCard: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
+  reviewHeader: { flexDirection: 'row', alignItems: 'flex-start' },
+  reviewCopy: { flex: 1 },
+  choreTitle: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  choreMeta: { color: '#64748B', fontSize: 12, marginTop: 4 },
+  submittedPill: { backgroundColor: '#DBEAFE', borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4, marginLeft: 8 },
+  submittedPillText: { color: '#1D4ED8', fontSize: 11, fontWeight: '700' },
+  reviewActions: { flexDirection: 'row', marginTop: 12 },
+  reviewButton: { flex: 1, backgroundColor: '#F1F5F9', borderRadius: 10, alignItems: 'center', paddingVertical: 11, marginRight: 8 },
+  reviewButtonText: { color: '#334155', fontWeight: '700', fontSize: 12 },
+  approveButton: { flex: 1, backgroundColor: '#10B981', borderRadius: 10, alignItems: 'center', paddingVertical: 11 },
+  approveButtonText: { color: '#FFF', fontWeight: '700', fontSize: 12 },
+  disabledButton: { opacity: 0.6 },
+  emptyText: { color: '#94A3B8', fontStyle: 'italic', marginTop: 12 },
+  childSection: { marginTop: 16 },
+  childHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  childName: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  childConsistency: { color: '#64748B', fontSize: 12, marginTop: 2 },
+  choreCount: { color: '#94A3B8', fontSize: 12 },
+  choreRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  statusDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
+  bountyDot: { backgroundColor: '#8B5CF6' },
+  choreCopy: { flex: 1 },
+  rowTitle: { color: '#0F172A', fontWeight: '600' },
+  rowMeta: { color: '#94A3B8', fontSize: 12, marginTop: 3 },
+  rowStatus: { fontSize: 11, fontWeight: '700', marginLeft: 8 },
+  bountyPoints: { color: '#8B5CF6', fontWeight: '800', marginLeft: 8 },
 });

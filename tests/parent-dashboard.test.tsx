@@ -82,4 +82,20 @@ describe('ParentDashboard', () => {
     fireEvent.press(getByLabelText('Open parent settings'));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps settings accessible while a legacy parent role is being repaired', async () => {
+    const onOpenSettings = jest.fn();
+    const legacyParent = { ...parentProfile, role: 'Parent' as Profile['role'] };
+    const { getByLabelText } = await render(
+      <FamilyScreen
+        profile={legacyParent}
+        familyMembers={[]}
+        onSignOut={jest.fn()}
+        onOpenSettings={onOpenSettings}
+      />
+    );
+
+    fireEvent.press(getByLabelText('Open parent settings'));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
 });

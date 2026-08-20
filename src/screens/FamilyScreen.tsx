@@ -16,6 +16,8 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({
   onSignOut,
   onOpenSettings,
 }) => {
+  const normalizedRole = typeof profile.role === 'string' ? profile.role.trim().toLowerCase() : '';
+  const isParent = normalizedRole === 'parent';
   const listedMembers = familyMembers.filter((member) => member.displayName?.trim());
   const validMembers = listedMembers.some((member) => member.uid === profile.uid) || !profile.displayName?.trim()
     ? listedMembers
@@ -25,7 +27,7 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Family Hub</Text>
-        {profile.role === 'parent' && onOpenSettings ? (
+        {isParent && onOpenSettings ? (
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Open parent settings"

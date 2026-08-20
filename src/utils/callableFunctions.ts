@@ -48,6 +48,15 @@ type MigrateFamilyPrivateDataResult = {
   migrated: number;
 };
 
+type RepairMyMembershipResult = {
+  uid: string;
+  displayName: string;
+  familyCode: string;
+  role: "parent" | "child";
+  points?: number;
+  [key: string]: unknown;
+};
+
 type NotifyChoreSubmittedResult = {
   sent: number;
 };
@@ -139,6 +148,10 @@ export function joinWithInvite(params: JoinWithInviteParams) {
 
 export function migrateFamilyPrivateData() {
   return callPublicCallable<MigrateFamilyPrivateDataResult>("migrateFamilyPrivateDataApi");
+}
+
+export function repairMyMembership() {
+  return callPublicCallable<RepairMyMembershipResult>("repairMyMembershipApi");
 }
 
 export function notifyChoreSubmitted(choreId: string) {

@@ -301,6 +301,84 @@ async function getParentMembership(uid, requestedFamilyCode) {
   return null;
 }
 
+function normalizeKnownRole(role) {
+  const normalizedRole = normalizeName(role).toLowerCase();
+  return normalizedRole === "parent" || normalizedRole === "child"
+    ? normalizedRole
+    : null;
+}
+
+const repairMyMembershipHandler = async (_data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
+  }
+
+  const uid = context.auth.uid;
+  const memberRef = db.collection("members").doc(uid);
+  const publicMemberRef = db.collection("membersPublic").doc(uid);
+
+  return db.runTransaction(async (tx) => {
+    const memberSnap = await tx.get(memberRef);
+    if (!memberSnap.exists) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Your family membership could not be found."
+      );
+    }
+
+    const member = memberSnap.data();
+    const familyCode = normalizeName(member.familyCode).toUpperCase();
+    if (!familyCode) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Your family membership is missing a family code."
+      );
+    }
+
+    const publicMemberSnap = await tx.get(publicMemberRef);
+    const familySnap = await tx.get(db.collection("families").doc(familyCode));
+    const publicMember = publicMemberSnap.exists ? publicMemberSnap.data() : null;
+    const family = familySnap.exists ? familySnap.data() : null;
+
+    let role = normalizeKnownRole(member.role) || normalizeKnownRole(publicMember?.role);
+    if (!role && family?.ownerUid === uid) {
+      role = "parent";
+    }
+    if (!role) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Your family role could not be verified."
+      );
+    }
+
+    const emailName = normalizeName(context.auth.token.email).split("@")[0];
+    const displayName =
+      normalizeName(member.displayName) ||
+      normalizeName(publicMember?.displayName) ||
+      emailName ||
+      (role === "parent" ? "Parent" : "Family Member");
+    const repairedMember = {
+      ...member,
+      uid,
+      displayName,
+      familyCode,
+      role,
+    };
+
+    tx.set(memberRef, repairedMember, { merge: true });
+    tx.set(
+      publicMemberRef,
+      { displayName, familyCode, role },
+      { merge: true }
+    );
+
+    return repairedMember;
+  });
+};
+
+exports.repairMyMembership = functions.https.onCall(repairMyMembershipHandler);
+exports.repairMyMembershipApi = publicOnCall(repairMyMembershipHandler);
+
 const createFamilyHandler = async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError("unauthenticated", "Sign in required.");

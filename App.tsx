@@ -26,7 +26,7 @@ import { useFamilyData } from "./src/hooks/useFamilyData";
 import { useChoreActions } from "./src/hooks/useChoreActions";
 import { syncChoreReminders } from "./src/utils/choreReminders";
 import { syncPrivatePushToken } from "./src/utils/notifications";
-import { migrateFamilyPrivateData } from "./src/utils/callableFunctions";
+import { migrateFamilyPrivateData, repairMyMembership } from "./src/utils/callableFunctions";
 
 // Screens & Components
 import { AuthScreen } from "./src/screens/AuthScreen";
@@ -97,7 +97,16 @@ export default function App() {
     if (!signOutRequestedRef.current) {
       const snap = await getDoc(doc(collection(db, "members"), u.uid));
       if (snap.exists) {
-        const p = { uid: u.uid, ...(snap.data() as Omit<Profile, "uid">) } as Profile;
+        let p = { uid: u.uid, ...(snap.data() as Omit<Profile, "uid">) } as Profile;
+        const rawRole = typeof p.role === "string" ? p.role.trim() : "";
+        const normalizedRole = rawRole.toLowerCase();
+        if (
+          (normalizedRole !== "parent" && normalizedRole !== "child") ||
+          rawRole !== normalizedRole
+        ) {
+          const repaired = await repairMyMembership();
+          p = { ...repaired, uid: u.uid } as Profile;
+        }
         setProfile(p);
         setActiveTab(p.role === "parent" ? "Review" : "Today");
       }

@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Profile } from '../types';
 
 interface FamilyScreenProps {
@@ -15,7 +16,10 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({
   onSignOut,
   onOpenSettings,
 }) => {
-  const validMembers = useMemo(() => familyMembers.filter(m => m.displayName?.trim()), [familyMembers]);
+  const listedMembers = familyMembers.filter((member) => member.displayName?.trim());
+  const validMembers = listedMembers.some((member) => member.uid === profile.uid) || !profile.displayName?.trim()
+    ? listedMembers
+    : [profile, ...listedMembers];
 
   return (
     <ScrollView style={styles.container}>
@@ -28,19 +32,23 @@ export const FamilyScreen: React.FC<FamilyScreenProps> = ({
             style={styles.settingsButton}
             onPress={onOpenSettings}
           >
-            <Text style={styles.settingsIcon}>⚙</Text>
+            <Ionicons name="settings-sharp" size={21} color="#475569" />
           </TouchableOpacity>
         ) : null}
       </View>
       
       <View style={styles.formCard}>
         <Text style={styles.sectionTitle}>Balances</Text>
-        {validMembers.map((c) => (
-          <View key={c.uid} style={styles.miniChoreRow}>
-            <Text style={styles.childName}>{c.displayName} ({c.role})</Text>
-            <Text style={{ fontWeight: '800', color: '#10B981' }}>{c.points || 0} Pts</Text>
-          </View>
-        ))}
+        {validMembers.length ? (
+          validMembers.map((c) => (
+            <View key={c.uid} style={styles.miniChoreRow}>
+              <Text style={styles.childName}>{c.displayName} ({c.role})</Text>
+              <Text style={styles.points}>{c.points || 0} Pts</Text>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyText}>No family members are available yet.</Text>
+        )}
       </View>
       
       <TouchableOpacity style={{ marginTop: 40, alignItems: 'center' }} onPress={onSignOut}>
@@ -65,10 +73,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
-  settingsIcon: { fontSize: 20, lineHeight: 22, color: '#475569' },
   formCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 20, marginTop: 20, borderWidth: 1, borderColor: '#E2E8F0', width: '100%' },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: 15 },
   miniChoreRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#F1F5F9' },
   childName: { fontSize: 16, fontWeight: '600' },
+  points: { fontWeight: '800', color: '#10B981' },
+  emptyText: { color: '#64748B', fontStyle: 'italic' },
   linkText: { color: '#2563EB', fontWeight: '600' },
 });

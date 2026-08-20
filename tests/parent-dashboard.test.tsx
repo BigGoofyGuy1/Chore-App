@@ -68,16 +68,17 @@ describe('ParentDashboard', () => {
 
   it('shows the settings gear on the parent Family screen', async () => {
     const onOpenSettings = jest.fn();
-    const { getByLabelText, queryByText } = await render(
+    const { getByLabelText, getByText, queryByText } = await render(
       <FamilyScreen
         profile={parentProfile}
-        familyMembers={[parentProfile]}
+        familyMembers={[]}
         onSignOut={jest.fn()}
         onOpenSettings={onOpenSettings}
       />
     );
 
     expect(queryByText(/Invite Someone/)).toBeNull();
+    expect(getByText('Parent (parent)')).toBeOnTheScreen();
     fireEvent.press(getByLabelText('Open parent settings'));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
